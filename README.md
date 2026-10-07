@@ -4,6 +4,10 @@ Blackmagic DeckLink 기반 다채널 방송 녹화/스트리밍 시스템입니�
 
 > 이 저장소는 실제 운영 환경(호스트명, IP, 운영 데이터 등)을 마스킹하고, 재현에 필요한 핵심 코드와 예시 설정만 정리해서 공개한 버전입니다.
 
+## 스크린샷
+
+![svcr2026 웹 UI](docs/screenshot.png)
+
 ## 주요 기능
 
 - **다채널 동시 녹화 + RTSP 프리뷰 스트리밍**: DeckLink Quad 카드 등에서 채널별로 녹화(XDCAM HD422 MXF)와 저지연 RTSP 프리뷰(MediaMTX 연동)를 동시에 수행
