@@ -13,6 +13,7 @@ Blackmagic DeckLink 기반 다채널 방송 녹화/스트리밍 시스템입니�
 - **녹화 파일 자동 전송**: 로컬(rec_path) → NAS/NFS(file_target_root)로 완성된 세그먼트를 자동 전송. 두 가지 방식 중 `config.json`의 전역 설정으로 선택
   - 기본: binary copy + header/footer 동기화 방식
   - 선택: [bmxtranswrap](https://github.com/bbc/bmx) 외부 바이너리를 이용한 growing-file 전송(실시간 페이싱, 자체 재시도)
+- **NVENC 하드웨어 인코딩 자동 감지/폴백**: 서버 기동 시 실제 더미 인코딩으로 NVENC 동작 여부를 검증하고, RTSP 프리뷰 스트림 인코딩에 자동 적용. GPU 동시 세션 한도를 넘으면 초과분은 libx264(소프트웨어)로 자동 전환
 - **디스크 용량 안전장치**: 녹화 중 rec_path 여유 공간이 부족하면 자동 정지(사유 로깅), 전송 전 대상 경로 용량이 부족하면 전송을 시작하지 않음
 - **설정 실시간 재반영**: 녹화 시작 시점마다 `rec_path`/`file_target_root`/`segment_time`/`ffmpeg_custom_params`를 `config.json`에서 다시 읽어옴 (서버를 재시작하지 않고도 변경 가능)
 - **재시작 내구성**: 서버가 재시작돼도(수동/자동 업데이트/크래시 등) 수동 녹화 중이던 채널(TEST 모드 여부 포함)을 자동으로 복구
@@ -68,6 +69,25 @@ cp config.example.json config.json
 cp scheduler.example.json scheduler.json
 ```
 
+## NVENC(하드웨어 인코딩) 자동 감지 및 폴백
+
+NVENC는 **RTSP 프리뷰 스트림 인코딩에만** 적용됩니다. 실제 녹화 파일(MXF)은 `ffmpeg_custom_params`에 지정한 코덱(기본값: mpeg2video, XDCAM HD422)을 그대로 쓰므로 NVENC 설정과 무관합니다.
+
+- **자동 감지**: 서버 기동 시 `nvidia-smi` 같은 외부 툴 유무가 아니라, ffmpeg로 실제 1프레임짜리 더미 영상을 `h264_nvenc`로 인코딩해봐서 진짜 동작하는지 직접 검증합니다. GPU/드라이버가 없거나 깨져 있으면 자동으로 libx264(소프트웨어 인코딩)로 전환됩니다.
+- **설정 범위**: `config.json`의 `stream_video_encode.prefer_nvenc`가 전역 기본값이고, 채널마다 `encoders[].prefer_nvenc`로 개별 오버라이드할 수 있습니다(`true`/`false`/미지정 시 전역값 따름).
+- **동시 세션 한도**: `stream_video_encode.nvenc_max_sessions`로 제한합니다. 일반 GeForce 계열은 드라이버 레벨에서 동시 NVENC 세션이 보통 3개로 제한되고, Quadro/데이터센터 GPU는 사실상 무제한입니다. 이미 이 한도만큼 다른 채널이 NVENC를 쓰고 있으면, 새로 시작하는 채널은 자동으로 libx264로 폴백합니다(에러 없이 조용히 전환).
+- **인코딩 옵션**: `stream_video_encode.h264_nvenc`/`libx264` 딕셔너리에서 각각 `preset`/`tune`/`g`/`bf`/`pix_fmt`를 조정할 수 있습니다.
+- **확인 방법**: 기동 로그에 `NVENC 사용 가능 여부: True/False (전역 prefer_nvenc=..., nvenc_max_sessions=...) | 인코더별 설정: ...` 한 줄로 현재 감지 결과와 채널별 설정이 출력됩니다.
+
+```json
+"stream_video_encode": {
+  "prefer_nvenc": true,
+  "nvenc_max_sessions": 3,
+  "libx264": { "preset": "ultrafast", "tune": "zerolatency", "g": 30, "bf": 0, "pix_fmt": "yuv420p" },
+  "h264_nvenc": { "preset": "p1", "tune": "ll", "g": 30, "bf": 0, "pix_fmt": "nv12" }
+}
+```
+
 ## 실행
 
 ```bash
@@ -113,6 +133,7 @@ svcr2026/
 - DeckLink 캡처 카드 및 전용 드라이버 환경을 전제로 개발되었습니다. 다른 캡처 장비를 쓰려면 `input_params`/필터 구성을 직접 맞춰야 합니다.
 - MXF(XDCAM HD422) 포맷에 맞춰 ffmpeg 파라미터가 구성되어 있습니다. 다른 포맷이 필요하면 `ffmpeg_custom_params`를 조정하세요.
 - `bmxtranswrap` 방식은 해당 바이너리가 시스템에 설치되어 있어야 동작합니다.
+- NVENC는 NVIDIA GPU + 드라이버가 없어도 동작은 합니다(자동으로 libx264로 폴백). 다만 채널 수가 많으면 CPU 소프트웨어 인코딩 부하가 커질 수 있습니다.
 
 ## 라이선스
 
