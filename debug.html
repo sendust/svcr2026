@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>sVCR Debug Console</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: 'Consolas', 'Courier New', monospace;
+            margin: 20px;
+        }
+        h1, h2 { color: #4da6ff; border-bottom: 1px solid #333; padding-bottom: 8px; }
+        
+        .sys-info {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            padding: 16px;
+            border-radius: 8px;
+            display: flex;
+            gap: 40px;
+            margin-bottom: 24px;
+            font-size: 16px;
+        }
+        .sys-info span { color: #00e676; font-weight: bold; font-size: 20px;}
+        .sys-info { align-items: center; }
+        #restart-main-btn {
+            background-color: #d32f2f;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        #restart-main-btn:hover { background-color: #e53935; }
+        #restart-main-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .encoder-debug-card {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 16px;
+        }
+
+        .info-box {
+            background: #242424;
+            padding: 12px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+        .info-box h3 { margin-top: 0; color: #ffca28; font-size: 14px; }
+        .info-box ul { list-style: none; padding: 0; margin: 0; font-size: 13px; color: #bbb; line-height: 1.6; }
+        .info-box ul li strong { color: #fff; display: inline-block; width: 160px; }
+
+        .log-container {
+            width: 100%;
+            height: 300px;
+            background: #000;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 10px;
+            overflow-y: auto;
+            box-sizing: border-box;
+            font-size: 12px;
+            border-radius: 4px;
+        }
+        .log-line { margin: 2px 0; word-break: break-all; }
+        .log-stderr { color: #ff5252; }
+        .log-stdout { color: #b0bec5; }
+    </style>
+</head>
+<body>
+    <h1>sVCR System Debug Console</h1>
+    
+    <div class="sys-info">
+        <div>CPU Usage: <span id="sys-cpu">0.0%</span></div>
+        <div>Memory: <span id="sys-mem">0.0%</span> (<span id="sys-mem-val">0 / 0 GB</span>)</div>
+        <div style="margin-left: auto;">
+            <button id="restart-main-btn" onclick="restartMainProcess()">main.py 재시작</button>
+        </div>
+    </div>
+
+    <div id="encoders-wrapper"></div>
+
+ <script>
+        // [추가] main.py 재시작 버튼. 되돌릴 수 없는 동작(호스트의 모든 ffmpeg 프로세스 SIGTERM +
+        // 서비스 재시작)이라 반드시 두 번 확인받는다. 이 버튼은 SSE 갱신 루프가 다시 그리는
+        // 대상(encoders-wrapper) 밖의 정적 엘리먼트라, index.html에서 겪었던 "잦은 재렌더링으로
+        // 클릭이 씹히는" 문제와는 무관하다.
+        async function restartMainProcess() {
+            const confirmMsg =
+                "정말로 main.py를 재시작하시겠습니까?\n\n" +
+                "- 이 호스트에서 실행 중인 모든 ffmpeg 프로세스(이 서비스가 추적하지 못하는 좀비/고아 " +
+                "프로세스 포함)에 SIGTERM을 보냅니다.\n" +
+                "- 현재 진행 중인 모든 채널의 녹화/스트리밍이 중단됩니다.\n" +
+                "- main.py가 정상 종료된 뒤 몇 초 안에 자동으로 다시 시작됩니다.";
+            if (!confirm(confirmMsg)) return;
+            if (!confirm("마지막 확인입니다. 정말로 재시작할까요?")) return;
+
+            const btn = document.getElementById('restart-main-btn');
+            const originalText = btn.innerText;
+            btn.disabled = true;
+            btn.innerText = "재시작 요청 중...";
+            try {
+                const res = await fetch('/debug/restart_main', { method: 'POST' });
+                const data = await res.json();
+                alert(`재시작 요청 완료. SIGTERM을 보낸 ffmpeg 프로세스: ${data.killed_ffmpeg_pids.length}개\n` +
+                      "잠시 후(수 초) 페이지를 새로고침해 주세요.");
+            } catch (e) {
+                // 서버가 이미 재시작 중이라 연결이 끊겼을 수 있음 - 이 자체는 정상적인 상황
+                alert("요청 중 연결이 끊겼습니다 (서버가 재시작 중일 수 있어 정상적인 상황입니다). " +
+                      "잠시 후 페이지를 새로고침해 주세요.");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = originalText;
+            }
+        }
+
+        // 사용자가 로그 창을 위로 올렸을 때 자동 스크롤을 방지하기 위한 플래그 기록
+        const autoScrollState = {};
+
+        // SSE 스트림 연결
+        const debugEventSource = new EventSource("/debug/events");
+
+        debugEventSource.addEventListener("debug_status", (e) => {
+            try {
+                const data = JSON.parse(e.data);
+
+                // 1. 시스템 정보 갱신
+                document.getElementById('sys-cpu').innerText = data.system.cpu_percent + '%';
+                document.getElementById('sys-mem').innerText = data.system.memory_percent + '%';
+                document.getElementById('sys-mem-val').innerText = `${data.system.memory_used_gb} / ${data.system.memory_total_gb} GB`;
+
+                // 2. 인코더 정보 렌더링
+                const wrapper = document.getElementById('encoders-wrapper');
+                
+                data.encoders.forEach(enc => {
+                    let card = document.getElementById(`enc-${enc.id}`);
+                    
+                    // 카드가 없으면 최초 생성
+                    if (!card) {
+                        card = document.createElement('div');
+                        card.id = `enc-${enc.id}`;
+                        card.className = 'encoder-debug-card';
+                        card.innerHTML = `
+                            <h2>${enc.name} (ID: ${enc.id}) - <span style="color: ${enc.state === 'free' ? '#888' : '#00e676'}">${enc.state}</span></h2>
+                            <div class="info-grid">
+                                <div class="info-box">
+                                    <h3>Storage Info (rec_path)</h3>
+                                    <ul>
+                                        <li><strong>Path:</strong> ${enc.rec_path}</li>
+                                        <li><strong>Free Space:</strong> <span id="disk-${enc.id}"></span></li>
+                                    </ul>
+                                </div>
+                                <div class="info-box">
+                                    <h3>MediaMTX Paths</h3>
+                                    <ul id="paths-${enc.id}"></ul>
+                                </div>
+                            </div>
+                            <h3 style="margin-bottom: 4px; font-size: 14px; color: #ffca28;">FFmpeg Real-time Logs (Last 200 lines)</h3>
+                            <div class="log-container" id="logs-${enc.id}"></div>
+                        `;
+                        wrapper.appendChild(card);
+                        
+                        // 스크롤 이벤트 리스너 (사용자가 스크롤을 올리면 자동 스크롤 중지)
+                        const logBox = document.getElementById(`logs-${enc.id}`);
+                        autoScrollState[enc.id] = true;
+                        logBox.addEventListener('scroll', () => {
+                            const isAtBottom = logBox.scrollHeight - logBox.scrollTop <= logBox.clientHeight + 10;
+                            autoScrollState[enc.id] = isAtBottom;
+                        });
+                    }
+
+                    // 내용 갱신
+                    card.querySelector('h2').innerHTML = `${enc.name} (ID: ${enc.id}) - <span style="color: ${enc.state === 'free' ? '#888' : '#00e676'}">${enc.state}</span>`;
+                    document.getElementById(`disk-${enc.id}`).innerText = `${enc.disk_free_gb} GB / ${enc.disk_total_gb} GB`;
+                    
+                    // Paths 렌더링
+                    const pathList = Object.entries(enc.paths).map(([key, val]) => `<li><strong>${key}:</strong> ${val}</li>`).join('');
+                    document.getElementById(`paths-${enc.id}`).innerHTML = pathList;
+
+                    // Logs 렌더링
+                    const logBox = document.getElementById(`logs-${enc.id}`);
+                    logBox.innerHTML = enc.logs.map(log => {
+                        const isErr = log.includes('[STDERR]');
+                        return `<div class="log-line ${isErr ? 'log-stderr' : 'log-stdout'}">${log}</div>`;
+                    }).join('');
+
+                    // 자동 스크롤
+                    if (autoScrollState[enc.id]) {
+                        logBox.scrollTop = logBox.scrollHeight;
+                    }
+                });
+            } catch (err) {
+                console.error("Failed to parse debug info:", err);
+            }
+        });
+
+        // 스트림 에러 처리
+        debugEventSource.onerror = (err) => {
+            console.error("SSE connection error in debug page.", err);
+        };
+    </script>
+</body>
+</html>

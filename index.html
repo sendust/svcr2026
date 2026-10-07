@@ -1,0 +1,1455 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>sVCR2026</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+        }
+        h1 { font-size: 20px; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 16px; }
+        
+		.encoders-container {
+			display: grid;
+			grid-template-columns: repeat(2, 1fr);
+			gap: 16px;
+		}
+
+        .encoder-card {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        /* [추가] 예약 스케줄러 패널: encoder-card 2칸 너비만큼 차지하고, 그리드의 마지막(가장 아래)에 위치 */
+        .scheduler-card {
+            grid-column: 1 / -1;
+        }
+        .sched-form {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin: 8px 0 12px 0;
+        }
+        .sched-form input[type="text"],
+        .sched-form input[type="date"],
+        .sched-form input[type="time"],
+        .sched-form select {
+            background: #242424;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            padding: 5px 8px;
+            font-size: 13px;
+        }
+        .sched-weekday-label {
+            font-size: 12px;
+            color: #ccc;
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            margin-right: 4px;
+        }
+        /* [추가] "반복 요일" 라벨 + 체크박스 7개를 폼의 다른 입력칸들과 한 줄에 욱여넣지 않고,
+           라벨/체크박스가 각각 자기 줄을 차지하는 전용 2줄 블록으로 분리한다. flex-basis:100%로
+           .sched-form(flex-wrap) 안에서 항상 새 줄부터 시작하게 만든다. */
+        .sched-weekday-block {
+            flex-basis: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .sched-weekday-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .sched-form-label {
+            font-size: 12px;
+            color: #999;
+        }
+        .sched-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .sched-table th, .sched-table td {
+            padding: 6px 8px;
+            text-align: left;
+            border-bottom: 1px solid #2a2a2a;
+            white-space: nowrap;
+        }
+        .sched-table th { color: #999; font-weight: normal; }
+        .sched-table th.sched-sortable { cursor: pointer; user-select: none; }
+        .sched-table th.sched-sortable:hover { color: #ddd; }
+        .sched-sort-arrow { margin-left: 4px; font-size: 10px; color: #ffca28; }
+        .sched-row-active { background: rgba(255, 82, 82, 0.15); }
+        .sched-row-upcoming { background: transparent; }
+        .sched-row-completed { background: rgba(255,255,255,0.03); color: #888; }
+        .sched-row-disabled { background: rgba(255,255,255,0.02); color: #666; }
+        .sched-table button {
+            font-size: 11px;
+            padding: 3px 8px;
+            margin-right: 4px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+        }
+        .sched-table button:hover { background: #444; }
+        /* [수정] 기본 button 규칙은 color:white만 정하고 배경은 브라우저 기본값(밝은 회색)에 맡겨서
+           흰 글씨가 거의 안 보였음. 예약 추가 버튼에 명시적 배경색을 지정해 대비를 확보한다. */
+        .btn-sched-add { background-color: #43a047; }
+        .btn-sched-add:hover { background-color: #4caf50; }
+        .sched-table-toolbar { display: flex; justify-content: flex-end; margin-top: 8px; }
+        .btn-sched-delete-completed { background-color: #616161; }
+        .btn-sched-delete-completed:hover { background-color: #757575; }
+        #sched-tbody-empty { color: #666; font-size: 13px; padding: 8px 0; }
+
+        /* [추가] 삭제 확인용 커스텀 모달. 네이티브 confirm()은 JS 실행 자체를 동기적으로 멈춰서
+           오디오 레벨 미터(requestAnimationFrame 루프)가 그 동안 멈춰버리는 부작용이 있었다.
+           이 모달은 그냥 HTML/CSS 오버레이라 떠 있는 동안에도 JS/rAF가 계속 돈다. */
+        .confirm-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        .confirm-modal-box {
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px 24px;
+            min-width: 260px;
+            max-width: 90vw;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+        .confirm-modal-message {
+            color: #eee;
+            font-size: 14px;
+            margin-bottom: 16px;
+            white-space: pre-wrap;
+        }
+        .confirm-modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .btn-confirm-yes { background-color: #d32f2f; }
+        .btn-confirm-no { background-color: #444; }
+
+        .enc-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .enc-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4da6ff;
+        }
+
+        .enc-status {
+            font-size: 10px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            background: #333;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+        .state-free { color: #888; border: 1px solid #555; }
+        .state-stream { color: #00e676; border: 1px solid #00e676; }
+        .state-rec_stream { color: #ff5252; border: 1px solid #ff5252; }
+
+        /* [추가] rec+stream 중일 때, 수동 REC로 시작한 건지 예약 스케줄러가 시작시킨 건지 구분 표시 */
+        .rec-mode-badge {
+            font-size: 9px;
+            padding: 3px 8px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            font-weight: bold;
+            margin-right: 6px;
+        }
+        .rec-mode-scheduled { color: #4fc3f7; border: 1px solid #4fc3f7; background: rgba(79,195,247,0.10); }
+        .rec-mode-manual { color: #aaa; border: 1px solid #666; background: transparent; }
+
+        /* encoder-card 상태별 테두리 색 데코레이션 */
+        .encoder-card.border-free { border: 2px solid #ffffff; }
+        .encoder-card.border-stream { border: 2px solid #87ceeb; }
+        .encoder-card.border-rec { border: 2px solid #ff0000; }
+
+		.media-row {
+			display: flex;
+			gap: 12px;
+			margin-bottom: 14px;
+			min-width: 0;
+		}
+
+		.video-box {
+			width: auto;
+			height: 400px;
+			flex: 1 1 auto;
+			min-width: 0;
+			background: #000;
+			border: 1px solid #333;
+			border-radius: 4px;
+			position: relative;
+			overflow: hidden;
+		}
+        video { width: 100%; height: 100%; object-fit: contain; }
+
+		.meter-box {
+            flex: none;
+            background: #242424;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            /* 추가: 비디오 박스와 동일한 높이 적용 및 패딩 포함 계산 */
+            height: 400px; 
+			width: 240px;
+            box-sizing: border-box; 
+        }
+
+        .meters-grid {
+            display: flex;
+            justify-content: space-around;
+            flex: 1;
+            min-height: 0;
+            align-items: flex-end;
+        }
+		
+		.channel-pair {
+            display: flex;
+            gap: 6px; /* 커진 글자가 서로 겹치지 않도록 기존 3px에서 12px로 넓힘 */
+            border-right: 1px dashed #444;
+            padding-right: 12px; /* 기존 6px에서 12px로 넓힘 */
+        }
+        .channel-pair:last-child { border: none; padding-right: 0; }
+
+        .meter-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+            justify-content: flex-end;
+        }
+
+        /* [수정] 색상 밴드(그라디언트)를 여기(고정 280px 높이의 배경)에 칠한다. 예전엔
+        .track-bar-fill(매 프레임 높이가 바뀌는 요소) 위에 그라디언트를 얹었는데, CSS
+        linear-gradient의 %는 "그 요소 자신의 크기" 기준이라 fill 높이가 바뀔 때마다 색 경계
+        (70%/90%)도 같이 늘었다 줄었다 했다 - 즉 -18dBFS/-6dBFS 위치가 고정되지 않고 신호 크기에
+        따라 미끄러지는 버그였다. 색은 항상 이 고정 크기 배경에 칠하고, 그 위를 덮는 마스크
+        (.track-bar-fill)의 크기만 바꿔서 "가려진 부분을 걷어내며 드러내는" 방식으로 바꾸면
+        색 경계가 항상 절대 위치(280px 기준 70%/90% 지점)에 고정된다.
+        이 70%/90% 값은 스크립트의 dbfsToPercent(-18), dbfsToPercent(-6)과 반드시 일치해야 한다. */
+        .track-bar-bg {
+            width: 8px; /* 비율을 맞추기 위해 기존 10px에서 16px로 약간 두껍게 변경 */
+            height: 280px; /* 상단에 progress bar 공간을 확보하기 위해 330px에서 축소 */
+            background: linear-gradient(to top,
+                #00c853 0%, #00c853 70%,
+                #ffd600 70%, #ffd600 90%,
+                #ff1744 90%, #ff1744 100%);
+            border-radius: 2px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* [수정] 이제 "막대 자체"가 아니라, 배경(.track-bar-bg)의 색 위를 위쪽부터 가리는
+        어두운 마스크다. 현재 레벨 위쪽(신호가 도달하지 못한 구간)만 이 색으로 덮어서 안 보이게
+        하고, 레벨 이하는 마스크 높이를 줄여서 걷어낸다 - 그래서 JS에서는
+        height = (100 - level)%로 세팅한다(레벨이 아니라 "가릴 비율"). */
+        .track-bar-fill {
+            width: 100%;
+            height: 100%; /* 기본값(무음)은 전부 가림 */
+            background: #111; /* .track-bar-bg의 원래 배경색과 동일해야 이음매 없이 자연스럽다 */
+            position: absolute;
+            top: 0;
+            transition: height 0.05s ease;
+        }
+
+        /* [추가] 피크 홀드 표시선. 순간 피크 위치에서 잠시 멈췄다가 천천히 흘러내리는,
+        방송용 레벨미터의 전형적인 피크 홀드 인디케이터. */
+        .track-bar-peak {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: #fff;
+            bottom: 0%;
+            opacity: 0.85;
+        }
+
+        /* [추가] dBFS 눈금(로그 스케일 - dB 값 자체가 진폭의 로그이므로, 이 눈금을 막대 높이에
+        선형으로 배치하는 것이 곧 로그 스케일 레벨미터가 된다). 인코더 카드당 하나만 표시해
+        여러 채널이 같은 기준 눈금을 공유하는 방송 미터 브리지 형태로 구성한다. */
+        .db-scale {
+            display: flex;
+            align-items: flex-end;
+            height: 100%;
+        }
+        .db-scale-box {
+            position: relative;
+            width: 20px;
+            height: 280px; /* .track-bar-bg와 동일해야 눈금이 막대와 정렬됨 */
+        }
+        .db-tick {
+            position: absolute;
+            right: 4px;
+            transform: translateY(50%);
+            font-size: 8px;
+            font-family: monospace;
+            color: #888;
+            line-height: 1;
+            white-space: nowrap;
+        }
+        .db-tick::after {
+            content: '';
+            position: absolute;
+            left: 100%;
+            top: 50%;
+            width: 3px;
+            height: 1px;
+            background: #555;
+        }
+
+		.ch-label {
+            font-size: 10px; /* 기존 10px에서 20px로 2배 확대 */
+            font-weight: bold; /* 가독성을 위해 굵게 처리 */
+            margin-top: 8px;
+            color: #ccc; /* 글씨가 커졌으므로 조금 더 밝은 색으로 변경 */
+        }
+
+		.controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+            align-items: center; /* 추가: 버튼과 프로그레스 바 수직 중앙 정렬 */
+        }
+
+        button {
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: bold;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            color: white;
+            transition: opacity 0.2s;
+        }
+        button:disabled {
+            opacity: 0.25;
+            cursor: not-allowed;
+        }
+        .btn-stream { background-color: #0288d1; }
+        .btn-rec { background-color: #d32f2f; }
+        .btn-stop { background-color: #616161; }
+        .btn-transfer { background-color: #f9a825; color: #000; }
+        .btn-copy { background-color: #455a64; padding: 4px 10px; font-size: 11px; }
+
+		.telemetry-bar {
+            background: #0d0d0d;
+            border: 1px solid #282828;
+            padding: 12px 16px; /* 글자가 커진 만큼 상하좌우 여백 확대 */
+            font-family: monospace;
+            font-size: 11.2px; /* 기본 레이블 글자 크기 (16px의 70%) */
+            color: #ccc;
+            border-radius: 4px;
+            display: flex;
+            gap: 24px; /* 항목 간 간격 확대 */
+        }
+
+        .telemetry-item span {
+            color: #fff;
+            font-weight: bold;
+            font-size: 12.6px; /* 실제 변하는 수치(값) 글자 크기 (18px의 70%) */
+        }
+		
+		
+    </style>
+    <script src="reader.js"></script>
+</head>
+<body>
+    <div id="audio-unlock-banner" style="display: none; background: #ff9800; color: #000; text-align: center; padding: 10px; cursor: pointer; font-weight: bold; margin-bottom: 16px; border-radius: 4px;">
+        ⚠️ 오디오 레벨 미터를 활성화하려면 화면을 한 번 클릭해 주세요 (브라우저 보안 정책)
+    </div>
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 16px;">
+        <h1 style="border-bottom: none; padding-bottom: 0; margin-bottom: 0;">XDCAM50 멀티채널 레코더 (by sendust 2026) <span id="hostname-display" style="color: #4da6ff;">(-)</span> <span id="version-display" style="color: #888; font-size: 14px; font-weight: normal;"></span></h1>
+        <div style="display: flex; gap: 10px;">
+            <button class="btn-transfer" onclick="toggleTransferAll()">TRANSFER</button>
+            <button class="btn-stream" onclick="streamAll()">STREAM ALL</button>
+            <button class="btn-rec" onclick="recAll()">REC ALL</button>
+            <button class="btn-stop" onclick="stopAll()">STOP ALL</button>
+        </div>
+    </div>
+    <div id="encoders-wrapper" class="encoders-container"></div>
+
+    <script>
+        let audioCtx = null;
+		// 브라우저 주소창의 호스트 IP를 자동으로 가져오도록 변경
+		const WHEP_BASE_URL = `http://${window.location.hostname}:8889`;
+        const encoderStates = {};
+        const activeReaders = {};
+        let serverInfoCardEl = null;
+        let schedulerCardEl = null;
+        let lastScheduleList = [];
+        let schedulerNamesResolved = false;  // 인코더 이름 확정 후 스케줄 표를 "딱 한 번만" 재렌더링하기 위한 플래그
+        const WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
+
+        // [추가] ffmpeg가 주는 "HH:MM:SS.ffffff" 형태의 progress_time에서 소수점 이하를
+        // 2자리로 잘라서 표시한다 (예: "00:00:03.092813" -> "00:00:03.09").
+        function formatProgressTime(t) {
+            if (!t) return t;
+            const dot = t.indexOf('.');
+            if (dot === -1) return t;
+            return t.slice(0, dot + 3);
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // ── 오디오 레벨미터: dBFS 로그 스케일 ──────────────────────────────
+        // dBFS(=20*log10(rms))는 그 자체로 진폭의 로그값이므로, 이 dB 값을 막대 높이(%)에
+        // "선형"으로 매핑하면 곧 로그 스케일 레벨미터가 된다 (방송 장비의 표준 방식).
+        const METER_MIN_DB = -60; // 막대 맨 아래(0%)가 나타내는 dBFS
+        const METER_MAX_DB = 0;   // 막대 맨 위(100%) = 0dBFS(디지털 풀스케일)
+
+        function dbfsToPercent(db) {
+            const clamped = Math.max(METER_MIN_DB, Math.min(METER_MAX_DB, db));
+            return (clamped - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB) * 100;
+        }
+
+        // 눈금 표시용 기준 dB 값들. -18dBFS/-6dBFS는 .track-bar-fill의 색상 밴드 경계(70%/90%)와
+        // 반드시 일치해야 하므로, CSS를 바꾸면 이 목록과 위 그라디언트 stop을 함께 맞춰야 한다.
+        const DB_SCALE_TICKS = [0, -6, -12, -18, -30, -45, -60];
+
+        function renderDbScale() {
+            const ticksHtml = DB_SCALE_TICKS.map(db => {
+                const pct = dbfsToPercent(db);
+                return `<div class="db-tick" style="bottom: ${pct}%;">${db}</div>`;
+            }).join('');
+            return `<div class="db-scale"><div class="db-scale-box">${ticksHtml}</div></div>`;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const GB = k * k * k;
+            // 1GB 이상이면 소수점 둘째자리까지 고정 표기 (예: 0.00 GB, 1.23 GB)
+            if (bytes >= GB) {
+                return (bytes / GB).toFixed(2) + ' GB';
+            }
+            const sizes = ['B', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function createEncoderDOM(enc) {
+            const wrapper = document.getElementById("encoders-wrapper");
+            const div = document.createElement("div");
+            div.className = "encoder-card border-free";
+            div.id = `enc-card-${enc.id}`;
+
+            div.innerHTML = `
+					<div class="enc-header" style="display: flex; align-items: center; justify-content: space-between;">
+                    <!-- 왼쪽: 인코더 이름 -->
+                    <div style="flex: 1; text-align: left;">
+                        <span class="enc-name">${enc.name} (Index #${enc.id})</span>
+                    </div>
+                    
+                    <!-- 가운데: 녹화 중인 파일명 -->
+                    <div style="flex: 1; text-align: center;">
+                        <span id="rec-filename-${enc.id}" style="font-size: 14px; font-family: monospace; color: #ffca28; font-weight: normal;"></span>
+                    </div>
+                    
+                    <!-- 오른쪽: 상태 뱃지 -->
+                    <div style="flex: 1; text-align: right;">
+                        <span id="rec-mode-badge-${enc.id}" class="rec-mode-badge" style="display:none;"></span>
+                        <span class="enc-status" id="status-badge-${enc.id}">FREE</span>
+                    </div>
+                </div>
+                <div class="media-row">
+                    <div class="video-box">
+                        <video id="video-${enc.id}" autoplay muted playsinline></video>
+                    </div>
+                    <div class="meter-box">
+                        <!-- 파일 전송 진행률 표시 (기존 controls 영역에서 이동, progress bar / 용량 텍스트 두 줄 표시) -->
+                        <div id="transfer-wrap-${enc.id}" style="display: none; flex-direction: column; gap: 4px; width: 100%; margin-bottom: 8px; flex: none;">
+                            <div style="width: 100%; height: 14px; background: #333; border-radius: 4px; overflow: hidden; position: relative;">
+                                <div id="transfer-bar-${enc.id}" style="width: 0%; height: 100%; background: #00e676; transition: width 0.2s;"></div>
+                            </div>
+                            <div id="transfer-txt-${enc.id}" style="font-size: 10px; color: #ccc; white-space: nowrap; font-family: monospace; text-align: center;">0 B / 0 B</div>
+                        </div>
+                        <div class="meters-grid">
+                            ${renderDbScale()}
+                            ${[1, 3, 5, 7].map(pairStart => `
+                                <div class="channel-pair">
+                                    <div class="meter-wrapper">
+                                        <div class="track-bar-bg">
+                                            <div class="track-bar-fill" id="fill-${enc.id}-${pairStart}"></div>
+                                            <div class="track-bar-peak" id="peak-${enc.id}-${pairStart}"></div>
+                                        </div>
+                                        <div class="ch-label">CH${pairStart}</div>
+                                    </div>
+                                    <div class="meter-wrapper">
+                                        <div class="track-bar-bg">
+                                            <div class="track-bar-fill" id="fill-${enc.id}-${pairStart+1}"></div>
+                                            <div class="track-bar-peak" id="peak-${enc.id}-${pairStart+1}"></div>
+                                        </div>
+                                        <div class="ch-label">CH${pairStart+1}</div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+				<div class="controls">
+                    <button class="btn-stream" id="btn-stream-${enc.id}" onclick="sendAction(${enc.id}, 'stream')">STREAM</button>
+                    <button class="btn-rec" id="btn-rec-${enc.id}" onclick="sendAction(${enc.id}, 'rec')">REC</button>
+                    <label style="display: flex; align-items: center; cursor: pointer; color: #ffeb3b; font-size: 13px;">
+                        <input type="checkbox" id="chk-transfer-${enc.id}" ${enc.transfer_enabled ? 'checked' : ''} style="margin-right: 5px;"> TRANSFER
+                    </label>
+
+					<!-- 새로 추가된 TEST 체크박스 -->
+                    <label style="display: flex; align-items: center; cursor: pointer; color: #03a9f4; font-size: 13px; margin-left: 10px;">
+                        <input type="checkbox" id="chk-test-${enc.id}" ${enc.test_enabled ? 'checked' : ''} style="margin-right: 5px;"> TEST
+                    </label>
+					
+                    <button class="btn-stop" id="btn-stop-${enc.id}" onclick="sendAction(${enc.id}, 'stop')">STOP</button>
+
+                    <!-- 기존 프로그레스 바 자리: 녹화 파일명 태그 입력용 텍스트 박스 (config.json에 저장된 마지막 값으로 초기화) -->
+                    <input type="text" id="rec-tag-${enc.id}" placeholder="파일명 태그 입력" value="${escapeHtml(enc.rec_tag || '')}"
+                        style="flex: 1; margin-left: 10px; padding: 6px 10px; background: #242424; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 13px;">
+                </div>
+                <div class="telemetry-bar">
+                    <div class="telemetry-item">STATUS: <span id="telem-status-${enc.id}">-</span></div>
+                    <div class="telemetry-item">TIME: <span id="telem-time-${enc.id}">00:00:00.00</span></div>
+                    <div class="telemetry-item">SPEED: <span id="telem-speed-${enc.id}">0x</span></div>
+                    <div class="telemetry-item">FILE: <span id="telem-file-${enc.id}">0 B</span></div>
+                    <div class="telemetry-item">FFLOG: <span id="telem-fflog-${enc.id}">0 B</span></div>
+                </div>
+            `;
+            wrapper.appendChild(div);
+        }
+
+		function updateUIState(enc) {
+            // 1. 누락되었던 UI 요소 변수 선언 복구
+            const statusBadge = document.getElementById(`status-badge-${enc.id}`);
+            const btnStream = document.getElementById(`btn-stream-${enc.id}`);
+            const btnRec = document.getElementById(`btn-rec-${enc.id}`);
+            const btnStop = document.getElementById(`btn-stop-${enc.id}`);
+
+			// [추가] 체크박스 요소를 가져옵니다.
+            const chkTransfer = document.getElementById(`chk-transfer-${enc.id}`);
+			const chkTest = document.getElementById(`chk-test-${enc.id}`);
+			const inputRecTag = document.getElementById(`rec-tag-${enc.id}`);
+
+			// [추가] 인코더 카드 테두리 색상: free=white, stream=sky blue, rec=red
+			const card = document.getElementById(`enc-card-${enc.id}`);
+			if (card) {
+				card.classList.remove('border-free', 'border-stream', 'border-rec');
+				if (enc.state === 'free') card.classList.add('border-free');
+				else if (enc.state === 'stream') card.classList.add('border-stream');
+				else card.classList.add('border-rec');
+			}
+
+			// 추가: 현재 녹화 중인 파일명 UI 갱신
+            const recFileEl = document.getElementById(`rec-filename-${enc.id}`);
+            if (recFileEl) {
+                recFileEl.innerText = enc.current_file ? `[ ${enc.current_file} ]` : '';
+            }
+
+            // 2. 상태 뱃지 업데이트
+            statusBadge.className = 'enc-status ' + (
+                enc.state === 'free' ? 'state-free' : 
+                enc.state === 'stream' ? 'state-stream' : 'state-rec_stream'
+            );
+            statusBadge.innerText = enc.state;
+
+            // [추가] 수동 녹화인지 예약 녹화인지 구분 표시 (rec+stream일 때만 의미 있음)
+            const modeBadge = document.getElementById(`rec-mode-badge-${enc.id}`);
+            if (modeBadge) {
+                if (enc.state === 'rec+stream') {
+                    if (enc.started_by_schedule) {
+                        const sched = lastScheduleList.find(s => s.id === enc.started_by_schedule);
+                        modeBadge.textContent = (sched && sched.title) ? `예약: ${sched.title}` : '예약 녹화';
+                        modeBadge.className = 'rec-mode-badge rec-mode-scheduled';
+                    } else {
+                        modeBadge.textContent = '수동 녹화';
+                        modeBadge.className = 'rec-mode-badge rec-mode-manual';
+                    }
+                    modeBadge.style.display = 'inline-block';
+                } else {
+                    modeBadge.style.display = 'none';
+                }
+            }
+
+            // 3. 버튼 활성화 매트릭스 반영
+            if (enc.state === "free") {
+                btnStream.disabled = false;
+                btnRec.disabled = false;
+                btnStop.disabled = true;
+				// [추가] 대기 상태일 때는 사용자가 조작할 수 있도록 체크박스 활성화
+                if (chkTransfer) chkTransfer.disabled = false;
+				if (chkTest) chkTest.disabled = false;
+				if (inputRecTag) inputRecTag.disabled = false;
+
+            } else {
+                if (enc.state === "rec+stream") {
+                    btnStream.disabled = true;
+                    btnRec.disabled = true;
+                    btnStop.disabled = false;
+                } else if (enc.state === "stream") {
+                    btnStream.disabled = true;
+                    btnRec.disabled = false;
+                    btnStop.disabled = false;
+                }
+                
+                // [추가] 동작 중일 때는 체크박스 조작을 막고 백엔드의 상태를 그대로 렌더링
+                if (chkTransfer) {
+                    chkTransfer.checked = enc.transfer_enabled;
+                    chkTransfer.disabled = true;
+                }
+				if (chkTest) {
+                    chkTest.checked = enc.test_enabled;
+                    chkTest.disabled = true;
+                }
+				// 녹화/스트리밍 중에도 다음 녹화에 사용할 파일명 태그는 계속 수정할 수 있도록 비활성화하지 않음
+
+            }
+
+            // 4. 프로그레스 바 상태 업데이트
+            const tWrap = document.getElementById(`transfer-wrap-${enc.id}`);
+            const tBar = document.getElementById(`transfer-bar-${enc.id}`);
+            const tTxt = document.getElementById(`transfer-txt-${enc.id}`);
+            
+            if (enc.transfer_active) {
+                tWrap.style.display = 'flex';
+                const pct = enc.transfer_total > 0 ? (enc.transfer_copied / enc.transfer_total) * 100 : 0;
+                tBar.style.width = Math.min(pct, 100) + '%';
+                tTxt.innerText = `${formatBytes(enc.transfer_copied)} / ${formatBytes(enc.transfer_total)}`;
+            } else {
+                tWrap.style.display = 'none';
+            }
+            
+            // 5. 텔레메트리 렌더링 (중복 제거 및 하나로 통합)
+            document.getElementById(`telem-status-${enc.id}`).innerText = enc.state;
+            document.getElementById(`telem-time-${enc.id}`).innerText = formatProgressTime(enc.progress_time);
+            document.getElementById(`telem-speed-${enc.id}`).innerText = enc.speed;
+            document.getElementById(`telem-file-${enc.id}`).innerText = formatBytes(enc.file_size);
+            document.getElementById(`telem-fflog-${enc.id}`).innerText = formatBytes(enc.fflog_size);
+
+            handleWebRTCBinding(enc);
+        }
+function ensureAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                const unlockBanner = document.getElementById("audio-unlock-banner");
+                
+                // 화면 아무 곳이나 클릭하면 오디오 컨텍스트 강제 활성화
+                const unlockAudio = () => {
+                    if (audioCtx && audioCtx.state === 'suspended') {
+                        audioCtx.resume();
+                    }
+                    if (unlockBanner) unlockBanner.style.display = "none";
+                    document.body.removeEventListener('click', unlockAudio);
+                };
+                
+                document.body.addEventListener('click', unlockAudio);
+                
+                // 상호작용 없이 로드되어 suspended 상태면 배너 표시
+                if (audioCtx.state === 'suspended' && unlockBanner) {
+                    unlockBanner.style.display = "block";
+                }
+            }
+            
+            // await를 제거하여 WebRTC 연결이 블로킹되지 않게 함
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume().catch(e => console.warn("오디오 활성화 대기 중(클릭 필요)"));
+            }
+        }
+
+function handleWebRTCBinding(enc) {
+            const encId = enc.id;
+            const isRunning = enc.state !== "free";
+
+            if (isRunning && !activeReaders[encId]) {
+                activeReaders[encId] = [];
+                
+                // 블로킹 없이 즉시 호출 (비디오/오디오 스트림 바인딩을 먼저 시작)
+                ensureAudioContext(); 
+
+                const videoPath = `input${encId}00`;
+                const audioPaths = [
+                    { path: `input${encId}12`, ch: 1 },
+                    { path: `input${encId}34`, ch: 3 },
+                    { path: `input${encId}56`, ch: 5 },
+                    { path: `input${encId}78`, ch: 7 }
+                ];
+
+                // Video 스트림 바인딩
+                const vReader = new window.MediaMTXWebRTCReader({
+                    url: `${WHEP_BASE_URL}/${videoPath}/whep`,
+                    onTrack: (evt) => {
+                        if (evt.track.kind === 'video') {
+                            document.getElementById(`video-${encId}`).srcObject = evt.streams[0];
+                        }
+                    },
+                    onError: (err) => console.error(err)
+                });
+                activeReaders[encId].push(vReader);
+
+                // 4 Audio Stereo 스트림 (총 8 mono ch) 바인딩
+                audioPaths.forEach(pair => {
+                    const aReader = new window.MediaMTXWebRTCReader({
+                        url: `${WHEP_BASE_URL}/${pair.path}/whep`,
+                        onTrack: (evt) => {
+                            if (evt.track.kind === 'audio') {
+                                setupAudioMeter(encId, evt.streams[0], pair.ch);
+                            }
+                        },
+                        onError: (err) => console.error(err)
+                    });
+                    activeReaders[encId].push(aReader);
+                });
+                
+            } else if (!isRunning && activeReaders[encId]) {
+                activeReaders[encId].forEach(reader => reader.close());
+                delete activeReaders[encId];
+                const videoEl = document.getElementById(`video-${encId}`);
+                if (videoEl) videoEl.srcObject = null;
+                for (let ch = 1; ch <= 8; ch++) {
+                    const fill = document.getElementById(`fill-${encId}-${ch}`);
+                    if (fill) fill.style.height = "100%"; // 마스크 전부 덮기 = 무음 상태
+                    const peak = document.getElementById(`peak-${encId}-${ch}`);
+                    if (peak) peak.style.bottom = "0%";
+                }
+            }
+        }
+
+        // ── 미터 댐핑(밸리스틱) 설정 ──────────────────────────────
+        // 값이 올라갈 때(ATTACK)는 빠르게 반응하고, 내려갈 때(RELEASE)는
+        // 천천히 떨어지게 해서 실제 VU/PPM 미터처럼 '얌전하게' 움직이도록 함.
+        // 0~1 사이 값이며, 1에 가까울수록 즉각 반응(=댐핑 거의 없음), 0에 가까울수록 느림.
+        const METER_ATTACK = 0.6;   // 레벨 상승 반응 속도
+        const METER_RELEASE = 0.15; // 레벨 하강 반응 속도 (이 값을 더 낮추면 더 얌전해짐)
+
+        function setupAudioMeter(encId, stream, pairStartIdx) {
+            if (!audioCtx) return;
+            const source = audioCtx.createMediaStreamSource(stream);
+
+            // 크롬 RTP 오디오 디코더 활성 유지용 무음 라우팅 우회로
+            const silentGain = audioCtx.createGain();
+            silentGain.gain.value = 0;
+            source.connect(silentGain);
+            silentGain.connect(audioCtx.destination);
+
+            const splitter = audioCtx.createChannelSplitter(2);
+            source.connect(splitter);
+
+			for (let i = 0; i < 2; i++) {
+                const analyser = audioCtx.createAnalyser();
+                // 256 -> 1024: 분석 윈도우를 넓혀서 순간적인 파형 위상 차이로 인한
+                // RMS 튐(=미터가 톤 신호에서도 춤추듯 보이는 원인) 자체를 줄임
+                analyser.fftSize = 1024;
+                splitter.connect(analyser, i);
+
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+                const fillElement = document.getElementById(`fill-${encId}-${pairStartIdx + i}`);
+                const peakElement = document.getElementById(`peak-${encId}-${pairStartIdx + i}`);
+
+                let smoothedLevel = 0; // 채널별로 댐핑된 현재 레벨 값(0~100, dBFS를 로그 스케일로 매핑한 값)
+
+                // [추가] 피크 홀드: 방송용 레벨미터처럼 순간 피크에서 잠깐 멈췄다가 천천히 흘러내린다.
+                let peakLevel = 0;
+                let peakHoldUntil = 0;
+                let lastTs = 0;
+                const PEAK_HOLD_MS = 1200;
+                const PEAK_DECAY_PER_SEC = 45; // %/초 (레벨미터 0~100% 기준 하강 속도)
+
+                // 화살표 함수로 변경하여 각 루프마다 독립적인 컨텍스트를 갖게 함
+                const draw = (ts) => {
+                    if (!activeReaders[encId]) return;
+                    analyser.getByteTimeDomainData(dataArray);
+
+                    let sum = 0;
+                    for (let j = 0; j < bufferLength; j++) {
+                        let v = (dataArray[j] - 128) / 128;
+                        sum += v * v;
+                    }
+                    const rms = Math.sqrt(sum / bufferLength);
+                    // [수정] 방송 장비처럼 dBFS 단위 + 로그 스케일 적용. rms(0~1)를 20*log10(rms)로
+                    // dBFS 변환 후 METER_MIN_DB~METER_MAX_DB로 클램프하고, 그 dB 구간을 막대 높이(0~100%)에
+                    // 선형으로 매핑한다 - dB 자체가 이미 로그값이므로 이 매핑이 곧 로그 스케일 미터가 된다.
+                    const dbfs = rms > 0 ? 20 * Math.log10(rms) : METER_MIN_DB;
+                    const targetLevel = dbfsToPercent(dbfs);
+
+                    // 지수 스무딩(EMA) + 어택/릴리즈 분리 댐핑
+                    const coeff = targetLevel > smoothedLevel ? METER_ATTACK : METER_RELEASE;
+                    smoothedLevel += (targetLevel - smoothedLevel) * coeff;
+
+                    // 피크 홀드 갱신
+                    const dt = lastTs ? (ts - lastTs) / 1000 : 0;
+                    lastTs = ts;
+                    if (targetLevel >= peakLevel) {
+                        peakLevel = targetLevel;
+                        peakHoldUntil = ts + PEAK_HOLD_MS;
+                    } else if (ts > peakHoldUntil) {
+                        peakLevel = Math.max(targetLevel, peakLevel - PEAK_DECAY_PER_SEC * dt);
+                    }
+
+                    if (fillElement) {
+                        // fillElement는 이제 "가리는 마스크"이므로 레벨이 아니라 (100-레벨)%를 높이로 준다.
+                        fillElement.style.height = (100 - smoothedLevel).toFixed(1) + '%';
+                    }
+                    if (peakElement) {
+                        peakElement.style.bottom = peakLevel.toFixed(1) + '%';
+                    }
+                    requestAnimationFrame(draw);
+                };
+                requestAnimationFrame(draw);
+            }
+        }
+
+		async function sendAction(encId, action) {
+            ensureAudioContext(); 
+            
+            let payload = { action: action };
+            const chkTransfer = document.getElementById(`chk-transfer-${encId}`);
+            const chkTest = document.getElementById(`chk-test-${encId}`);
+            const recTagInput = document.getElementById(`rec-tag-${encId}`);
+
+            if (action === 'rec') {
+                payload.rec_tag = recTagInput ? recTagInput.value : "";
+            }
+            if (action === 'rec' || action === 'stream') {
+                // [수정] 예전엔 TRANSFER 체크박스 값을 REC일 때만 보냈다. 그래서 사용자가 free 상태에서
+                // TRANSFER를 체크한 뒤 STREAM을 누르면, 그 체크 상태가 서버로 전혀 전달되지 않고
+                // 서버에 남아있던 예전 값(예: 시작 시 config.json의 false)이 그대로 되돌아와 화면에서
+                // 체크가 풀린 것처럼 보였다. STREAM도 REC처럼 지금 체크박스 값을 그대로 보낸다.
+                payload.transfer = chkTransfer ? chkTransfer.checked : false;
+                payload.test = chkTest ? chkTest.checked : false;
+            }
+
+            await fetch(`/api/encoder/${encId}/action`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+        }
+
+        // [추가] 인코더 개수 + 1: 마지막 encoders-container에 서버 정보/실시간 로그 카드 생성
+        function createServerInfoCard() {
+            const wrapper = document.getElementById("encoders-wrapper");
+            const div = document.createElement("div");
+            div.className = "encoder-card border-free";
+            div.id = "server-info-card";
+            div.innerHTML = `
+                <div class="enc-header">
+                    <span class="enc-name">SERVER INFO</span>
+                    <button id="si-log-copy-btn" class="btn-copy" onclick="copyServerLog()">LOG 복사</button>
+                </div>
+                <div style="font-family: monospace; font-size: 13px; line-height: 1.8; color: #ccc;">
+                    HOST: <span id="si-hostname" style="color: #fff;">-</span><br>
+                    IP: <span id="si-ip" style="color: #fff;">-</span><br>
+                    CPU: <span id="si-cpu" style="color: #fff;">-</span>% (<span id="si-cpu-model" style="color: #fff;">-</span> / <span id="si-cores" style="color: #fff;">-</span> cores)<br>
+                    RAM: <span id="si-ram" style="color: #fff;">-</span>%<br>
+                    TRANSFER MODE: <span id="si-transfer-mode" style="color: #ffca28;">-</span>
+                </div>
+                <div id="si-log" style="margin-top: 10px; height: 300px; overflow-y: auto; background: #0d0d0d; border: 1px solid #282828; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; color: #9ccc65; white-space: pre-wrap;"></div>
+            `;
+            wrapper.appendChild(div);
+            serverInfoCardEl = div;
+        }
+
+        function updateServerInfoCard(info) {
+            document.getElementById("si-hostname").innerText = info.hostname;
+            // 여러 NIC이 있는 경우 모든 IPv4 주소를 나열
+            document.getElementById("si-ip").innerText = (info.ip_list || []).join(', ');
+            document.getElementById("si-cpu").innerText = info.cpu_percent.toFixed(1);
+            document.getElementById("si-ram").innerText = info.mem_percent.toFixed(1);
+            document.getElementById("si-cpu-model").innerText = info.cpu_model;
+            document.getElementById("si-cores").innerText = info.cpu_cores;
+            // [추가] config.json의 전역 bmxtranswrap 설정으로 결정되는 transfer 방식 표시
+            document.getElementById("si-transfer-mode").innerText = info.transfer_mode || '-';
+
+            const hostnameDisplay = document.getElementById("hostname-display");
+            if (hostnameDisplay) hostnameDisplay.innerText = `(${info.hostname})`;
+
+            // [추가] 브라우저 탭 타이틀을 sVCR2026-호스트명 으로 표시
+            document.title = `sVCR2026-${info.hostname}`;
+
+            // [추가] main.py 마지막 수정일시를 버전 표기로 상단에 표시
+            const versionDisplay = document.getElementById("version-display");
+            if (versionDisplay) versionDisplay.innerText = `version - ${info.main_py_version || '-'}`;
+
+            // [추가] 스케줄러 패널 타이틀 옆에 서버 시각 표시 (브라우저 로컬 시계가 아닌 실제 서버 시계 기준 -
+            // 스케줄 시작/종료 판단이 서버 시계로 이뤄지므로 이걸 봐야 혼동이 없다)
+            const schedTimeEl = document.getElementById("sched-server-time");
+            if (schedTimeEl) schedTimeEl.innerText = info.server_time || '-';
+
+            const logEl = document.getElementById("si-log");
+            if (logEl) {
+                // [수정] 사용자가 로그를 위에서 아래로(과거 로그 쪽으로) 스크롤해서 보고 있는 중이면
+                // 매초 갱신 때마다 강제로 맨 위로 되돌리지 않는다. 이미 맨 위(최신 로그)를 보고 있을
+                // 때만 갱신 후에도 맨 위를 유지한다.
+                const wasAtTop = logEl.scrollTop <= 4;
+                // 최근 2000줄(기존 500줄의 4배) 중 마지막 로그가 제일 위로 오도록 역순 표시
+                const lines = (info.log_lines || []).slice(-2000).reverse();
+                // [추가] 자동 재시작 로그([AUTO-RESTART] 태그)는 다른 로그보다 눈에 띄게 강조
+                // [추가] STREAM/REC/STOP 버튼 조작 로그("API Action 수신")도 ffmpeg 내부 통계 등
+                // 잡다한 로그 사이에 묻혀 잘 안 보인다는 지적이 있어, 파란색으로 구분되게 강조한다.
+                logEl.innerHTML = lines.map(line => {
+                    const escaped = escapeHtml(line);
+                    if (line.includes('[AUTO-RESTART]')) {
+                        return `<span style="display:block; color:#ff5252; font-weight:bold; background:rgba(255,82,82,0.12); border-left:3px solid #ff5252; padding:1px 4px; margin:1px 0;">${escaped}</span>`;
+                    }
+                    if (line.includes('API Action 수신')) {
+                        return `<span style="display:block; color:#4fc3f7; font-weight:bold; background:rgba(79,195,247,0.10); border-left:3px solid #4fc3f7; padding:1px 4px; margin:1px 0;">${escaped}</span>`;
+                    }
+                    return escaped;
+                }).join('\n');
+                if (wasAtTop) logEl.scrollTop = 0;
+            }
+        }
+
+        // [추가] SERVER INFO 로그 클립보드 복사
+        function fallbackCopyText(text, onDone) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            try {
+                document.execCommand('copy');
+                if (onDone) onDone();
+            } catch (e) {
+                console.error('클립보드 복사 실패:', e);
+            }
+            document.body.removeChild(ta);
+        }
+
+        function copyServerLog() {
+            const logEl = document.getElementById("si-log");
+            const btn = document.getElementById("si-log-copy-btn");
+            if (!logEl) return;
+            const text = logEl.innerText;
+
+            const showCopied = () => {
+                if (!btn) return;
+                const original = btn.innerText;
+                btn.innerText = "복사됨!";
+                setTimeout(() => { btn.innerText = original; }, 1500);
+            };
+
+            // HTTP(비보안 컨텍스트)로 서빙되는 경우 Clipboard API를 못 쓸 수 있어 fallback 처리
+            if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(showCopied).catch(() => fallbackCopyText(text, showCopied));
+            } else {
+                fallbackCopyText(text, showCopied);
+            }
+        }
+
+        // ===================== 예약 스케줄러 (SCHEDULER) =====================
+        // 과거 AutoHotkey(scheduler2.ahk)로 만들었던 예약 녹화 기능을 www UI로 옮긴 것.
+        // 인코더 컨테이너 2칸 너비만큼 차지하고, encoder 카드/서버 정보 카드 뒤(가장 아래)에 위치한다.
+
+        // [추가] 폼을 열 때/초기화할 때 시작=현재+1분, 종료=현재+2분, 날짜=오늘 로 미리 채워둬서
+        // "일단 빨리 하나 등록해서 테스트해보기" 같은 근시일 1회성 예약을 편하게 만들 수 있게 한다.
+        function defaultScheduleTimes() {
+            const now = new Date();
+            const plus1 = new Date(now.getTime() + 60 * 1000);
+            const plus2 = new Date(now.getTime() + 120 * 1000);
+            const pad = n => String(n).padStart(2, '0');
+            const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+            return { start: hhmm(plus1), end: hhmm(plus2), date: ymd(now) };
+        }
+
+        // [추가] 시작/종료/날짜 위젯 중 아무거나 클릭(포커스)하는 순간, 셋 다 "지금 기준" 기본값으로
+        // 새로고침한다. 페이지를 띄워두고 시간이 좀 지난 뒤에 예약을 추가하려 할 때 날짜/시간이
+        // 과거값으로 남아있는 걸 방지하기 위함.
+        // [수정] 셋을 한꺼번에 갱신하면, start에 포커스해서 값을 고친 뒤 end로 옮겨갈 때 그 포커스
+        // 이벤트가 start까지 다시 덮어써서 방금 고친 값이 사라지는 문제가 있었다. 포커스가 들어온
+        // "그 필드 하나만" 기본값으로 채우고, 포커스 아웃된 다른 필드는 사용자가 입력한 값 그대로 둔다.
+        function refreshScheduleDefault(fieldId) {
+            const def = defaultScheduleTimes();
+            const defaultsById = { 'sched-start': def.start, 'sched-end': def.end, 'sched-date': def.date };
+            const el = document.getElementById(fieldId);
+            if (el) el.value = defaultsById[fieldId];
+        }
+
+        function onStopOnlyToggle() {
+            const stopOnly = document.getElementById('sched-stop-only').checked;
+            // 정지 전용은 "언제 끝낼지"만 의미가 있고, 시작/타이틀/전송 여부는 쓰이지 않으므로 비활성화
+            document.getElementById('sched-start').disabled = stopOnly;
+            document.getElementById('sched-title').disabled = stopOnly;
+            document.getElementById('sched-transfer').disabled = stopOnly;
+        }
+
+        function resetSchedulerForm() {
+            const def = defaultScheduleTimes();
+            document.getElementById('sched-title').value = '';
+            document.getElementById('sched-transfer').checked = false;
+            document.getElementById('sched-stop-only').checked = false;
+            document.getElementById('sched-start').value = def.start;
+            document.getElementById('sched-end').value = def.end;
+            document.getElementById('sched-date').value = def.date;
+            document.querySelectorAll('.sched-weekday-chk').forEach(el => el.checked = false);
+            onStopOnlyToggle();
+        }
+
+        function createSchedulerPanel() {
+            const wrapper = document.getElementById("encoders-wrapper");
+            const div = document.createElement("div");
+            div.className = "encoder-card scheduler-card border-free";
+            div.id = "scheduler-card";
+
+            const weekdayChecks = WEEKDAY_LABELS.map((label, idx) => `
+                <label class="sched-weekday-label">
+                    <input type="checkbox" class="sched-weekday-chk" value="${idx}"> ${label}
+                </label>
+            `).join('');
+            const def = defaultScheduleTimes();
+
+            div.innerHTML = `
+                <div class="enc-header">
+                    <div>
+                        <span class="enc-name">예약 스케줄러 (SCHEDULER)</span>
+                        <span id="sched-server-time" style="margin-left: 12px; font-family: monospace; font-size: 13px; color: #9ccc65;">-</span>
+                    </div>
+                </div>
+                <div class="sched-form">
+                    <select id="sched-encoder"></select>
+                    <input type="text" id="sched-title" placeholder="타이틀 (녹화 파일명 태그)" style="width: 320px;">
+                    <label class="sched-weekday-label"><input type="checkbox" id="sched-transfer"> TRANSFER</label>
+                    <span class="sched-form-label">시작</span>
+                    <input type="time" id="sched-start" value="${def.start}" onfocus="refreshScheduleDefault('sched-start')">
+                    <span class="sched-form-label">종료</span>
+                    <input type="time" id="sched-end" value="${def.end}" onfocus="refreshScheduleDefault('sched-end')">
+                    <span class="sched-form-label">날짜(1회성)</span>
+                    <input type="date" id="sched-date" value="${def.date}" onfocus="refreshScheduleDefault('sched-date')">
+                    <label class="sched-weekday-label" style="margin-left: 10px; color: #ff8a65;">
+                        <input type="checkbox" id="sched-stop-only" onchange="onStopOnlyToggle()"> 정지 전용 (수동 녹화도 강제 종료)
+                    </label>
+                    <button type="button" class="btn-sched-add" onclick="addSchedule()">예약 추가</button>
+                    <div class="sched-weekday-block">
+                        <div class="sched-form-label">반복 요일 (선택 시 매주 반복)</div>
+                        <div class="sched-weekday-row">${weekdayChecks}</div>
+                    </div>
+                </div>
+                <div class="sched-table-toolbar">
+                    <button type="button" class="btn-sched-delete-completed" onclick="deleteCompletedSchedules()">완료된 예약 모두 삭제</button>
+                </div>
+                <table class="sched-table">
+                    <thead>
+                        <tr id="sched-thead-row">
+                            <th class="sched-sortable" data-col="encoder" onclick="sortSchedules('encoder')">인코더<span class="sched-sort-arrow"></span></th>
+                            <th class="sched-sortable" data-col="title" onclick="sortSchedules('title')">타이틀<span class="sched-sort-arrow"></span></th>
+                            <th class="sched-sortable" data-col="start" onclick="sortSchedules('start')">시작<span class="sched-sort-arrow"></span></th>
+                            <th class="sched-sortable" data-col="end" onclick="sortSchedules('end')">종료<span class="sched-sort-arrow"></span></th>
+                            <th class="sched-sortable" data-col="repeat" onclick="sortSchedules('repeat')">반복/날짜<span class="sched-sort-arrow"></span></th>
+                            <th class="sched-sortable" data-col="transfer" onclick="sortSchedules('transfer')">전송<span class="sched-sort-arrow"></span></th>
+                            <th class="sched-sortable" data-col="status" onclick="sortSchedules('status')">상태<span class="sched-sort-arrow"></span></th>
+                            <th>동작</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sched-tbody"></tbody>
+                </table>
+                <div id="sched-tbody-empty" style="display:none;">등록된 예약이 없습니다.</div>
+            `;
+            wrapper.appendChild(div);
+            schedulerCardEl = div;
+        }
+
+        // 인코더 목록은 고정(재부팅 전까지 안 바뀜)이라, 최초 한 번만 드롭다운을 채운다.
+        function ensureSchedulerEncoderOptions() {
+            const sel = document.getElementById('sched-encoder');
+            if (!sel || sel.options.length > 0) return;
+            Object.values(encoderStates)
+                .filter(enc => enc && enc.id !== undefined)
+                .sort((a, b) => a.id - b.id)
+                .forEach(enc => {
+                    const opt = document.createElement('option');
+                    opt.value = enc.id;
+                    opt.textContent = enc.name;
+                    sel.appendChild(opt);
+                });
+        }
+
+        const SCHED_STATUS_LABEL = { active: '진행중', upcoming: '예약됨', completed: '완료', disabled: '중지됨' };
+
+        // [추가] 스케줄 표 머리글 클릭 정렬. 컬럼마다 "정렬에 쓸 비교값"을 뽑는 함수를 정의해두고,
+        // 실제 표시 텍스트(encName, repeatText 등)와 동일한 기준으로 정렬되게 한다.
+        let scheduleSortState = { col: null, dir: 1 };
+
+        const SCHED_SORT_KEYS = {
+            encoder: s => (encoderStates[s.encoder_id] ? encoderStates[s.encoder_id].name : `#${s.encoder_id}`),
+            title: s => (s.stop_only ? '[정지 전용]' : (s.title || '')),
+            start: s => (s.stop_only ? '' : s.start_time),
+            end: s => s.end_time,
+            repeat: s => (s.repeat_days && s.repeat_days.length)
+                ? s.repeat_days.slice().sort((a, b) => a - b).join('')
+                : (s.date || ''),
+            transfer: s => (s.transfer_enabled ? 1 : 0),
+            status: s => s.status,
+        };
+
+        function sortSchedules(col) {
+            if (scheduleSortState.col === col) {
+                scheduleSortState.dir *= -1;
+            } else {
+                scheduleSortState.col = col;
+                scheduleSortState.dir = 1;
+            }
+            renderSchedules(lastScheduleList);
+        }
+
+        function updateSchedSortHeaderUI() {
+            document.querySelectorAll('#sched-thead-row th.sched-sortable').forEach(th => {
+                const arrow = th.querySelector('.sched-sort-arrow');
+                if (!arrow) return;
+                arrow.textContent = (th.dataset.col === scheduleSortState.col)
+                    ? (scheduleSortState.dir === 1 ? '▲' : '▼')
+                    : '';
+            });
+        }
+
+        function renderSchedules(list) {
+            lastScheduleList = list || [];
+            const tbody = document.getElementById('sched-tbody');
+            const emptyEl = document.getElementById('sched-tbody-empty');
+            if (!tbody) return;
+
+            updateSchedSortHeaderUI();
+
+            if (!list || list.length === 0) {
+                tbody.innerHTML = '';
+                if (emptyEl) emptyEl.style.display = 'block';
+                return;
+            }
+            if (emptyEl) emptyEl.style.display = 'none';
+
+            let displayList = list;
+            if (scheduleSortState.col) {
+                const keyFn = SCHED_SORT_KEYS[scheduleSortState.col];
+                displayList = list.slice().sort((a, b) => {
+                    const va = keyFn(a), vb = keyFn(b);
+                    if (va < vb) return -1 * scheduleSortState.dir;
+                    if (va > vb) return 1 * scheduleSortState.dir;
+                    return 0;
+                });
+            }
+
+            tbody.innerHTML = displayList.map(s => {
+                const encInfo = encoderStates[s.encoder_id];
+                const encName = encInfo ? encInfo.name : `#${s.encoder_id}`;
+                const repeatText = (s.repeat_days && s.repeat_days.length)
+                    ? s.repeat_days.slice().sort().map(d => WEEKDAY_LABELS[d]).join('')
+                    : (s.date || '-');
+                const statusText = SCHED_STATUS_LABEL[s.status] || s.status;
+                const toggleLabel = s.enabled ? '중지' : '재개';
+                const titleText = s.stop_only ? '[정지 전용]' : (s.title || '');
+                const startText = s.stop_only ? '-' : s.start_time;
+
+                return `<tr class="sched-row-${s.status}">
+                    <td>${escapeHtml(encName)}</td>
+                    <td>${escapeHtml(titleText)}</td>
+                    <td>${startText}</td>
+                    <td>${s.end_time}</td>
+                    <td>${escapeHtml(repeatText)}</td>
+                    <td>${s.transfer_enabled ? 'O' : '-'}</td>
+                    <td>${statusText}</td>
+                    <td>
+                        <button onclick="toggleSchedule('${s.id}', ${!s.enabled})">${toggleLabel}</button>
+                        <button onclick="deleteSchedule('${s.id}')">삭제</button>
+                        <button onclick="extendSchedule('${s.id}')">+10분</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        async function fetchSchedulesOnce() {
+            try {
+                const res = await fetch('/api/schedules');
+                if (res.ok) {
+                    const list = await res.json();
+                    ensureSchedulerEncoderOptions();
+                    renderSchedules(list);
+                }
+            } catch (e) {
+                // 최초 fetch가 실패해도 5초 주기 SSE 브로드캐스트가 곧 채워준다
+            }
+        }
+
+        async function addSchedule() {
+            const sel = document.getElementById('sched-encoder');
+            const encoderId = sel ? parseInt(sel.value, 10) : NaN;
+            const stopOnly = document.getElementById('sched-stop-only').checked;
+            const title = stopOnly ? '' : document.getElementById('sched-title').value;
+            const transfer = stopOnly ? false : document.getElementById('sched-transfer').checked;
+            const start = document.getElementById('sched-start').value;
+            const end = document.getElementById('sched-end').value;
+            const dateVal = document.getElementById('sched-date').value;
+            const repeatDays = Array.from(document.querySelectorAll('.sched-weekday-chk:checked'))
+                .map(el => parseInt(el.value, 10));
+
+            if (Number.isNaN(encoderId)) { alert('인코더를 선택하세요'); return; }
+            if (!end) { alert('종료 시각을 입력하세요'); return; }
+            if (!stopOnly && !start) { alert('시작 시각을 입력하세요'); return; }
+            if (repeatDays.length === 0 && !dateVal) { alert('반복 요일을 선택하거나, 1회성이면 날짜를 지정하세요'); return; }
+
+            const res = await fetch('/api/schedules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    encoder_id: encoderId, title, transfer_enabled: transfer,
+                    start_time: start, end_time: end, date: dateVal, repeat_days: repeatDays,
+                    stop_only: stopOnly
+                })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: '요청 실패' }));
+                alert(err.detail || '스케줄 추가 실패');
+                return;
+            }
+            resetSchedulerForm();
+        }
+
+        function createConfirmModal() {
+            const div = document.createElement('div');
+            div.id = 'confirm-modal-overlay';
+            div.className = 'confirm-modal-overlay';
+            div.innerHTML = `
+                <div class="confirm-modal-box">
+                    <div id="confirm-modal-message" class="confirm-modal-message"></div>
+                    <div class="confirm-modal-actions">
+                        <button type="button" class="btn-confirm-no" id="confirm-modal-no">취소</button>
+                        <button type="button" class="btn-confirm-yes" id="confirm-modal-yes">삭제</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(div);
+        }
+
+        // 네이티브 confirm()/alert()과 달리 JS 실행을 막지 않는 모달. Promise로 결과(true/false)를 돌려준다.
+        // opts로 버튼 문구를 바꾸거나(yesLabel/noLabel) 취소 버튼을 숨겨서(hideNo) 단순 알림창으로도 쓸 수 있다.
+        function showConfirmModal(message, opts = {}) {
+            const { yesLabel = '삭제', noLabel = '취소', hideNo = false } = opts;
+            return new Promise(resolve => {
+                const overlay = document.getElementById('confirm-modal-overlay');
+                const msgEl = document.getElementById('confirm-modal-message');
+                const yesBtn = document.getElementById('confirm-modal-yes');
+                const noBtn = document.getElementById('confirm-modal-no');
+                msgEl.textContent = message;
+                yesBtn.textContent = hideNo ? '확인' : yesLabel;
+                noBtn.textContent = noLabel;
+                noBtn.style.display = hideNo ? 'none' : '';
+                overlay.style.display = 'flex';
+
+                const cleanup = (result) => {
+                    overlay.style.display = 'none';
+                    yesBtn.removeEventListener('click', onYes);
+                    noBtn.removeEventListener('click', onNo);
+                    overlay.removeEventListener('click', onOverlayClick);
+                    resolve(result);
+                };
+                const onYes = () => cleanup(true);
+                const onNo = () => cleanup(false);
+                const onOverlayClick = (e) => { if (e.target === overlay) cleanup(false); };
+
+                yesBtn.addEventListener('click', onYes);
+                noBtn.addEventListener('click', onNo);
+                overlay.addEventListener('click', onOverlayClick);
+            });
+        }
+
+        async function deleteSchedule(id) {
+            const ok = await showConfirmModal('이 예약을 삭제할까요?');
+            if (!ok) return;
+            await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
+        }
+
+        async function extendSchedule(id) {
+            const res = await fetch(`/api/schedules/${id}/extend`, { method: 'POST' });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: '요청 실패' }));
+                alert(err.detail || '연장 실패');
+            }
+        }
+
+        async function deleteCompletedSchedules() {
+            const completedCount = lastScheduleList.filter(s => s.status === 'completed').length;
+            if (completedCount === 0) {
+                await showConfirmModal('완료된 예약이 없습니다.', { hideNo: true });
+                return;
+            }
+            const ok = await showConfirmModal(`완료된 예약 ${completedCount}건을 모두 삭제할까요?`);
+            if (!ok) return;
+            const res = await fetch('/api/schedules/delete_completed', { method: 'POST' });
+            const data = await res.json();
+            await showConfirmModal(`${data.deleted_count}건 삭제되었습니다.`, { hideNo: true });
+        }
+
+        async function toggleSchedule(id, enabled) {
+            await fetch(`/api/schedules/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+        }
+
+        // [추가] TRANSFER: 각 인코더의 TRANSFER 체크박스를 토글 (동작 중인 인코더는 비활성 상태라 무시됨)
+        function toggleTransferAll() {
+            Object.values(encoderStates).forEach(enc => {
+                const chk = document.getElementById(`chk-transfer-${enc.id}`);
+                if (chk && !chk.disabled) {
+                    chk.checked = !chk.checked;
+                }
+            });
+        }
+
+        // [추가] STREAM ALL / REC ALL / STOP ALL
+        // 여러 인코더에 명령이 동시에 몰리면 DeckLink 하드웨어 초기화 부하로
+        // 워치독(Stderr Progress Timeout)이 한꺼번에 발동할 수 있어, 인코더별로 약간의 지연을 두고 순차 전송한다.
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // STREAM ALL: free 상태인 인코더에만 동작 (이미 stream/rec+stream 중인 인코더는 건드리지 않음)
+        async function streamAll() {
+            for (const enc of Object.values(encoderStates)) {
+                if (enc.id !== undefined && enc.state === 'free') {
+                    sendAction(enc.id, 'stream');
+                    await delay(400);
+                }
+            }
+        }
+
+        async function recAll() {
+            for (const enc of Object.values(encoderStates)) {
+                if (enc.id !== undefined && enc.state !== 'rec+stream') {
+                    sendAction(enc.id, 'rec');
+                    await delay(400);
+                }
+            }
+        }
+
+        async function stopAll() {
+            for (const enc of Object.values(encoderStates)) {
+                if (enc.id !== undefined && enc.state !== 'free') {
+                    sendAction(enc.id, 'stop');
+                    await delay(400);
+                }
+            }
+        }
+
+        createServerInfoCard();
+        createSchedulerPanel();
+        createConfirmModal();
+        fetchSchedulesOnce();
+
+        // SSE 스트림 연결
+        const eventSource = new EventSource("/events");
+		eventSource.addEventListener("status", (e) => {
+            const list = JSON.parse(e.data);
+            list.forEach(enc => {
+                if (!encoderStates[enc.id]) {
+                    createEncoderDOM(enc);
+                    // 초기 상태 생성 (비교를 위해)
+                    encoderStates[enc.id] = { state: "free" }; 
+                }
+                
+                const prevState = encoderStates[enc.id].state;
+                
+                // [해결 부분] stream <-> rec+stream 간 직접 전환 시 기존 WebRTC 강제 리셋
+                if (prevState !== enc.state && prevState !== "free" && enc.state !== "free") {
+                    if (activeReaders[enc.id]) {
+                        activeReaders[enc.id].forEach(reader => reader.close());
+                        delete activeReaders[enc.id];
+                        
+                        // 비디오 및 오디오 UI 초기화
+                        const videoEl = document.getElementById(`video-${enc.id}`);
+                        if (videoEl) videoEl.srcObject = null;
+                        for (let ch = 1; ch <= 8; ch++) {
+                            const fill = document.getElementById(`fill-${enc.id}-${ch}`);
+                            if (fill) fill.style.height = "100%"; // 마스크 전부 덮기 = 무음 상태
+                            const peak = document.getElementById(`peak-${enc.id}-${ch}`);
+                            if (peak) peak.style.bottom = "0%";
+                        }
+                    }
+                }
+
+                encoderStates[enc.id] = enc;
+                updateUIState(enc);
+            });
+
+            // [수정] 서버 정보 카드 -> 스케줄러 패널 순서로 항상 맨 뒤에 위치하도록 재배치.
+            // 이 블록이 "status" 이벤트(0.2초마다)마다 실행되는데, 이미 올바른 위치(맨 끝)에 있어도
+            // appendChild()를 그냥 호출하면 브라우저가 "제거 후 재삽입"으로 처리해 그 안의 <select>/
+            // <input>이 포커스를 잃는다 (스케줄러 드롭다운이 열자마자 닫히고, 입력창 focus가 바로
+            // 풀리던 버그의 원인). 실제로 위치가 어긋난 경우(새 인코더 카드가 막 추가된 직후)에만
+            // 옮기도록 가드를 추가한다.
+            const wrapperEl = document.getElementById("encoders-wrapper");
+            if (serverInfoCardEl && wrapperEl.lastElementChild !== serverInfoCardEl && wrapperEl.lastElementChild !== schedulerCardEl) {
+                wrapperEl.appendChild(serverInfoCardEl);
+            }
+            if (schedulerCardEl && wrapperEl.lastElementChild !== schedulerCardEl) {
+                wrapperEl.appendChild(schedulerCardEl);
+            }
+
+            // [수정] 이 핸들러는 "status" 이벤트(0.2초마다)마다 실행되는데, 예전엔 여기서 매번
+            // renderSchedules()로 스케줄 표(tbody)를 통째로 다시 그렸다. 그러면 초당 5번씩 삭제/토글
+            // 버튼 DOM이 통째로 교체되면서, 사용자가 마우스 down~up 하는 그 짧은 순간에 하필 다시
+            // 그려지면 클릭이 씹히는 문제가 있었다 ("삭제 버튼이 가끔 반응 없음"의 원인). 인코더
+            // 이름은 처음 한 번만 확정되면 그 뒤로 안 바뀌므로, 이름을 채우는 재렌더링도 딱 한 번만
+            // 수행한다. 그 이후 스케줄 표 갱신은 5초 주기의 "schedules" 이벤트에서만 일어난다.
+            ensureSchedulerEncoderOptions();
+            const schedSel = document.getElementById('sched-encoder');
+            if (!schedulerNamesResolved && schedSel && schedSel.options.length > 0) {
+                schedulerNamesResolved = true;
+                if (lastScheduleList.length) renderSchedules(lastScheduleList);
+            }
+        });
+
+        eventSource.addEventListener("server_info", (e) => {
+            const info = JSON.parse(e.data);
+            updateServerInfoCard(info);
+        });
+
+        let lastScheduleRawData = null;
+        eventSource.addEventListener("schedules", (e) => {
+            // [추가] 5초마다 오는 이벤트인데 내용이 안 바뀌었으면(대부분의 경우) 굳이 표를 다시 그리지
+            // 않는다 - 매번 다시 그리면 그 순간 삭제/토글 버튼 클릭이 씹힐 여지가 생기기 때문.
+            if (e.data === lastScheduleRawData) return;
+            lastScheduleRawData = e.data;
+            const list = JSON.parse(e.data);
+            ensureSchedulerEncoderOptions();
+            renderSchedules(list);
+        });
+    </script>
+</body>
+</html>

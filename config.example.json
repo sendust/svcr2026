@@ -1,0 +1,66 @@
+{
+  "total_encoders": 2,
+  "bmxtranswrap": false,
+  "stream_video_encode": {
+    "prefer_nvenc": true,
+    "nvenc_max_sessions": 3,
+    "libx264": {
+      "preset": "ultrafast",
+      "tune": "zerolatency",
+      "g": 30,
+      "bf": 0,
+      "pix_fmt": "yuv420p"
+    },
+    "h264_nvenc": {
+      "preset": "p1",
+      "tune": "ll",
+      "g": 30,
+      "bf": 0,
+      "pix_fmt": "nv12"
+    }
+  },
+  "encoders": [
+    {
+      "id": 1,
+      "name": "encoder1",
+      "input_params": "-format_code Hi59 -channels 8 -f decklink -i \"DeckLink Quad (1)\"",
+      "segment_time": 3600,
+      "rec_path": "/mnt/local_storage",
+      "stream_target_root": "rtsp://127.0.0.1:8554",
+      "file_target_root": "/mnt/nas_storage",
+      "stderr_timeout_sec": 8.0,
+      "auto_restart_hold_time": 3.0,
+      "graceful_stop_timeout_sec": 20.0,
+      "footer_update_delay_sec": 20.0,
+      "file_stagnation_timeout_sec": 8.0,
+      "segment_rollover_grace_sec": 15.0,
+      "ffmpeg_custom_params": "-vcodec mpeg2video -pix_fmt yuv422p -profile:v 0 -level:v 2 -g 15 -bf 2 -b:v 50M -maxrate 50M -minrate 50M -bufsize 35000k -ar 48000",
+      "rec_tag": "",
+      "prefer_nvenc": true,
+      "transfer_enabled": false,
+      "manual_recording_active": false,
+      "test_enabled": false
+    },
+    {
+      "id": 2,
+      "name": "encoder2",
+      "input_params": "-format_code Hi59 -channels 8 -f decklink -i \"DeckLink Quad (2)\"",
+      "segment_time": 3600,
+      "rec_path": "/mnt/local_storage",
+      "stream_target_root": "rtsp://127.0.0.1:8554",
+      "file_target_root": "/mnt/nas_storage",
+      "stderr_timeout_sec": 8.0,
+      "auto_restart_hold_time": 3.0,
+      "graceful_stop_timeout_sec": 20.0,
+      "footer_update_delay_sec": 20.0,
+      "file_stagnation_timeout_sec": 8.0,
+      "segment_rollover_grace_sec": 15.0,
+      "ffmpeg_custom_params": "-vcodec mpeg2video -pix_fmt yuv422p -profile:v 0 -level:v 2 -g 15 -bf 2 -b:v 50M -maxrate 50M -minrate 50M -bufsize 35000k -ar 48000",
+      "rec_tag": "",
+      "prefer_nvenc": true,
+      "transfer_enabled": false,
+      "manual_recording_active": false,
+      "test_enabled": false
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+# Python 가상환경 (이 디렉토리 안에 직접 생성됨: python3 -m venv .)
+bin/
+lib/
+lib64
+include/
+pyvenv.cfg
+__pycache__/
+*.pyc
+
+# 실제 운영 설정/데이터 (민감한 경로·장비 정보 포함 - config.example.json, scheduler.example.json 참고)
+config.json
+scheduler.json
+
+# 로그 / 녹화 산출물
+log/
+*.mxf
+*.log
+
+# 백업/실험용 사본, 내부 운영 메모 (현재 코드베이스와 무관하거나 민감한 내용 포함)
+main_backup*.py
+main_target_retouch.py
+prompt_backup.txt
+nagoya_hardware_spec.txt
+stop_update_ubuntu.txt
+
+# 에디터/개인 환경 설정
+.tmux.conf
+.vscode/
+.idea/
+
+# OS
+.DS_Store
