@@ -529,7 +529,7 @@ class FFmpegEncoderWrapper:
         # ---------------------------------------------------------
         cmd = [
             "ffmpeg", "-y", "-hide_banner",
-            "-stats_period", "1", "-nostats",
+            "-stats_period", "0.3", "-nostats",
             "-progress", "pipe:2",
         ] + current_preset["input_args"] + [
             "-filter_complex", current_preset["filter_complex"]

@@ -22,6 +22,9 @@ main_target_retouch.py
 prompt_backup.txt
 nagoya_hardware_spec.txt
 stop_update_ubuntu.txt
+index_backup.html
+debug.html.bak.*
+config_nagoya2.json
 
 # 에디터/개인 환경 설정
 .tmux.conf

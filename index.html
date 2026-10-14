@@ -1010,15 +1010,13 @@ function handleWebRTCBinding(enc) {
             document.getElementById('sched-transfer').disabled = stopOnly;
         }
 
+        // [수정] 동일한 시간/조건으로 인코더만 바꿔가며 예약을 연달아 추가하는 경우가 잦아서,
+        // 예약추가 성공 후에도 TRANSFER 체크, 시작/종료 시각, 날짜, 반복 요일은 그대로 남겨둔다.
+        // (인코더 선택도 원래부터 리셋 안 하던 값이라 그대로 유지됨) 다음 예약을 위해 비워야 하는
+        // 값(타이틀, 정지 전용 체크)만 초기화한다.
         function resetSchedulerForm() {
-            const def = defaultScheduleTimes();
             document.getElementById('sched-title').value = '';
-            document.getElementById('sched-transfer').checked = false;
             document.getElementById('sched-stop-only').checked = false;
-            document.getElementById('sched-start').value = def.start;
-            document.getElementById('sched-end').value = def.end;
-            document.getElementById('sched-date').value = def.date;
-            document.querySelectorAll('.sched-weekday-chk').forEach(el => el.checked = false);
             onStopOnlyToggle();
         }
 
