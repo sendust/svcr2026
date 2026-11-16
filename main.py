@@ -16,6 +16,10 @@ import random
 import fcntl
 import platform
 import psutil
+from server_stats import (
+    get_all_ipv4_addresses, get_cpu_model, detect_nvenc_available,
+    detect_nvidia_smi_available, gpu_stats_tick_loop, get_gpu_stats, get_net_io_rates,
+)
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
@@ -108,41 +112,6 @@ def sanitize_filename_tag(tag: str) -> str:
     return tag[:50]
 
 
-def get_local_ip() -> str:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
-
-
-def get_all_ipv4_addresses() -> List[str]:
-    # 여러 NIC이 존재하는 경우 모든 IPv4 주소를 나열
-    ips = []
-    try:
-        for addrs in psutil.net_if_addrs().values():
-            for addr in addrs:
-                if addr.family == socket.AF_INET and addr.address not in ips:
-                    ips.append(addr.address)
-    except Exception:
-        pass
-    return ips if ips else [get_local_ip()]
-
-
-def get_cpu_model() -> str:
-    try:
-        with open("/proc/cpuinfo") as f:
-            for line in f:
-                if line.startswith("model name"):
-                    return line.split(":", 1)[1].strip()
-    except Exception:
-        pass
-    return platform.processor() or "Unknown"
-
-
 CONFIG_PATH: str = ""  # lifespan 시작 시 실제 config 파일 경로로 설정됨
 
 # [추가] transfer 방식 선택. config.json의 전역 설정 "bmxtranswrap"(기본값 false)으로만 결정되며,
@@ -165,29 +134,6 @@ DEFAULT_STREAM_ENCODE_CFG = {
     "libx264": {"preset": "ultrafast", "tune": "zerolatency", "g": 30, "bf": 0, "pix_fmt": "yuv420p"},
     "h264_nvenc": {"preset": "p1", "tune": "ll", "g": 30, "bf": 0, "pix_fmt": "nv12"},
 }
-
-
-def detect_nvenc_available() -> bool:
-    """h264_nvenc 인코더가 실제로 동작하는지 짧은 더미 인코딩으로 확인한다 (NVIDIA GPU/드라이버 유무 판별).
-    nvidia-smi 등 별도 툴 설치 여부와 무관하게, ffmpeg가 실제로 NVENC를 호출할 수 있는지를 직접 검증한다.
-    [수정] 테스트 해상도를 64x64 -> 256x256 으로 상향. NVENC H.264 인코더는 최소 프레임 크기 제약이 있어
-    (예: "Frame Dimension less than the minimum supported value"), 64x64는 GPU/드라이버가 정상이어도
-    항상 InitializeEncoder 실패로 이어져 정상 시스템을 NVENC 불가로 오판하는 버그가 있었음."""
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-             "-f", "lavfi", "-i", "color=black:size=256x256:rate=1",
-             "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"],
-            capture_output=True, timeout=10
-        )
-        if result.returncode != 0:
-            # [추가] 실패 원인을 로그에 남겨서, 실제로 GPU가 없는 건지 파라미터/드라이버 문제인지
-            # 운영자가 이 함수를 수동으로 재현하지 않고도 기동 로그만으로 바로 알 수 있게 한다.
-            stderr_tail = result.stderr.decode("utf-8", errors="ignore").strip().splitlines()[-3:]
-            logger.warning(f"NVENC 감지 실패 (returncode={result.returncode}): {' | '.join(stderr_tail)}")
-        return result.returncode == 0
-    except Exception:
-        return False
 
 
 def get_stream_video_encoder(enc: "FFmpegEncoderWrapper") -> tuple:
@@ -273,8 +219,16 @@ def get_server_info() -> dict:
         "ip_list": get_all_ipv4_addresses(),
         "cpu_percent": psutil.cpu_percent(interval=None),
         "mem_percent": mem.percent,
+        # [추가] CPU 그래프 옆에 "free/total" 형태로 표시하기 위함. free가 아니라 available을 쓰는
+        # 이유: Linux에서 free는 캐시/버퍼를 반영하지 않아 실제보다 훨씬 작게 보이고, available이
+        # "지금 당장 회수해서 쓸 수 있는 양"을 뜻해 htop 등 다른 모니터링 도구와 체감이 일치한다.
+        "mem_free_gb": round(mem.available / (1024 ** 3), 1),
+        "mem_total_gb": round(mem.total / (1024 ** 3), 1),
         "cpu_model": get_cpu_model(),
         "cpu_cores": psutil.cpu_count(logical=True),
+        # [추가] 코어/스레드별 이용률 그래프용. interval=None이라 블로킹 없이 직전 호출 이후
+        # 경과분만 계산한다 - 전체 cpu_percent와 동일한 방식, 리스트로만 받는 차이.
+        "cpu_percpu": psutil.cpu_percent(interval=None, percpu=True),
         "main_py_version": get_main_py_version(),  # [추가] main.py 마지막 수정일시 (버전 표시용)
         "log_lines": list(SERVER_LOG_BUFFER),  # 최근 2000줄 (SERVER_LOG_BUFFER maxlen으로 제한됨)
         # [추가] 스케줄러가 실제로 기준으로 삼는 "서버 시각"을 화면에 보여주기 위함.
@@ -282,6 +236,9 @@ def get_server_info() -> dict:
         "server_time": datetime.now().strftime("%H:%M:%S %Y/%m/%d"),
         # [추가] config.json의 전역 "bmxtranswrap" 설정으로 결정되는 transfer 방식을 화면에 표시
         "transfer_mode": "bmxtranswrap" if BMXTRANSWRAP_ENABLED else "binary copy",
+        # [추가] nvidia-smi 기반 GPU 상태(캐시, server_stats.gpu_stats_tick_loop가 갱신) + NIC별 tx/rx 속도
+        "gpu_stats": get_gpu_stats(),
+        "net_io": get_net_io_rates(),
     }
 
 
@@ -1866,11 +1823,18 @@ async def lifespan(app: FastAPI):
         f"| 인코더별 설정: {per_enc_nvenc}"
     )
 
+    # [추가] nvidia-smi 응답 여부 검사 (GPU 상태 패널 표시 여부 결정). NVENC 감지(ffmpeg 더미
+    # 인코딩)와는 독립적인 별도 검사 - server_stats.detect_nvidia_smi_available() 참고.
+    nvidia_smi_available = await asyncio.to_thread(detect_nvidia_smi_available)
+    logger.info(f"nvidia-smi 사용 가능 여부: {nvidia_smi_available}")
+
     # [수정] 무한 루프 태스크를 변수에 담아서 기억해 둡니다.
     status_task = asyncio.create_task(status_tick_loop())
     server_info_task = asyncio.create_task(server_info_tick_loop())
     no_client_task = asyncio.create_task(no_client_auto_stop_loop())
     scheduler_task = asyncio.create_task(scheduler_tick_loop())
+    # [추가] nvidia-smi가 없는 호스트에서는 아예 태스크를 띄우지 않는다 (불필요한 polling 방지).
+    gpu_task = asyncio.create_task(gpu_stats_tick_loop()) if nvidia_smi_available else None
 
     yield  # 앱 실행 구간
 
@@ -1879,6 +1843,8 @@ async def lifespan(app: FastAPI):
     server_info_task.cancel()
     no_client_task.cancel()
     scheduler_task.cancel()
+    if gpu_task:
+        gpu_task.cancel()
     # [수정] 순차 종료(for + await) 대신 동시 종료로 변경 -> 인코더 5개가 각자 최대 5초씩
     # 걸릴 수 있는 graceful ffmpeg 종료를 직렬로 기다리지 않고 병렬로 처리해 전체 종료 시간을 단축
     await asyncio.gather(
@@ -2015,6 +1981,10 @@ async def favicon():
 @app.get("/reader.js")
 async def get_reader_js():
     return FileResponse(os.path.join(BASE_DIR, "reader.js"), media_type="application/javascript")
+
+@app.get("/server_info.js")
+async def get_server_info_js():
+    return FileResponse(os.path.join(BASE_DIR, "server_info.js"), media_type="application/javascript")
 
 
 @app.get("/events")

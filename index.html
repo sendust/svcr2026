@@ -381,6 +381,7 @@
 		
     </style>
     <script src="reader.js"></script>
+    <script src="server_info.js"></script>
 </head>
 <body>
     <div id="audio-unlock-banner" style="display: none; background: #ff9800; color: #000; text-align: center; padding: 10px; cursor: pointer; font-weight: bold; margin-bottom: 16px; border-radius: 4px;">
@@ -859,119 +860,9 @@ function handleWebRTCBinding(enc) {
             });
         }
 
-        // [추가] 인코더 개수 + 1: 마지막 encoders-container에 서버 정보/실시간 로그 카드 생성
-        function createServerInfoCard() {
-            const wrapper = document.getElementById("encoders-wrapper");
-            const div = document.createElement("div");
-            div.className = "encoder-card border-free";
-            div.id = "server-info-card";
-            div.innerHTML = `
-                <div class="enc-header">
-                    <span class="enc-name">SERVER INFO</span>
-                    <button id="si-log-copy-btn" class="btn-copy" onclick="copyServerLog()">LOG 복사</button>
-                </div>
-                <div style="font-family: monospace; font-size: 13px; line-height: 1.8; color: #ccc;">
-                    HOST: <span id="si-hostname" style="color: #fff;">-</span><br>
-                    IP: <span id="si-ip" style="color: #fff;">-</span><br>
-                    CPU: <span id="si-cpu" style="color: #fff;">-</span>% (<span id="si-cpu-model" style="color: #fff;">-</span> / <span id="si-cores" style="color: #fff;">-</span> cores)<br>
-                    RAM: <span id="si-ram" style="color: #fff;">-</span>%<br>
-                    TRANSFER MODE: <span id="si-transfer-mode" style="color: #ffca28;">-</span>
-                </div>
-                <div id="si-log" style="margin-top: 10px; height: 300px; overflow-y: auto; background: #0d0d0d; border: 1px solid #282828; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; color: #9ccc65; white-space: pre-wrap;"></div>
-            `;
-            wrapper.appendChild(div);
-            serverInfoCardEl = div;
-        }
-
-        function updateServerInfoCard(info) {
-            document.getElementById("si-hostname").innerText = info.hostname;
-            // 여러 NIC이 있는 경우 모든 IPv4 주소를 나열
-            document.getElementById("si-ip").innerText = (info.ip_list || []).join(', ');
-            document.getElementById("si-cpu").innerText = info.cpu_percent.toFixed(1);
-            document.getElementById("si-ram").innerText = info.mem_percent.toFixed(1);
-            document.getElementById("si-cpu-model").innerText = info.cpu_model;
-            document.getElementById("si-cores").innerText = info.cpu_cores;
-            // [추가] config.json의 전역 bmxtranswrap 설정으로 결정되는 transfer 방식 표시
-            document.getElementById("si-transfer-mode").innerText = info.transfer_mode || '-';
-
-            const hostnameDisplay = document.getElementById("hostname-display");
-            if (hostnameDisplay) hostnameDisplay.innerText = `(${info.hostname})`;
-
-            // [추가] 브라우저 탭 타이틀을 sVCR2026-호스트명 으로 표시
-            document.title = `sVCR2026-${info.hostname}`;
-
-            // [추가] main.py 마지막 수정일시를 버전 표기로 상단에 표시
-            const versionDisplay = document.getElementById("version-display");
-            if (versionDisplay) versionDisplay.innerText = `version - ${info.main_py_version || '-'}`;
-
-            // [추가] 스케줄러 패널 타이틀 옆에 서버 시각 표시 (브라우저 로컬 시계가 아닌 실제 서버 시계 기준 -
-            // 스케줄 시작/종료 판단이 서버 시계로 이뤄지므로 이걸 봐야 혼동이 없다)
-            const schedTimeEl = document.getElementById("sched-server-time");
-            if (schedTimeEl) schedTimeEl.innerText = info.server_time || '-';
-
-            const logEl = document.getElementById("si-log");
-            if (logEl) {
-                // [수정] 사용자가 로그를 위에서 아래로(과거 로그 쪽으로) 스크롤해서 보고 있는 중이면
-                // 매초 갱신 때마다 강제로 맨 위로 되돌리지 않는다. 이미 맨 위(최신 로그)를 보고 있을
-                // 때만 갱신 후에도 맨 위를 유지한다.
-                const wasAtTop = logEl.scrollTop <= 4;
-                // 최근 2000줄(기존 500줄의 4배) 중 마지막 로그가 제일 위로 오도록 역순 표시
-                const lines = (info.log_lines || []).slice(-2000).reverse();
-                // [추가] 자동 재시작 로그([AUTO-RESTART] 태그)는 다른 로그보다 눈에 띄게 강조
-                // [추가] STREAM/REC/STOP 버튼 조작 로그("API Action 수신")도 ffmpeg 내부 통계 등
-                // 잡다한 로그 사이에 묻혀 잘 안 보인다는 지적이 있어, 파란색으로 구분되게 강조한다.
-                logEl.innerHTML = lines.map(line => {
-                    const escaped = escapeHtml(line);
-                    if (line.includes('[AUTO-RESTART]')) {
-                        return `<span style="display:block; color:#ff5252; font-weight:bold; background:rgba(255,82,82,0.12); border-left:3px solid #ff5252; padding:1px 4px; margin:1px 0;">${escaped}</span>`;
-                    }
-                    if (line.includes('API Action 수신')) {
-                        return `<span style="display:block; color:#4fc3f7; font-weight:bold; background:rgba(79,195,247,0.10); border-left:3px solid #4fc3f7; padding:1px 4px; margin:1px 0;">${escaped}</span>`;
-                    }
-                    return escaped;
-                }).join('\n');
-                if (wasAtTop) logEl.scrollTop = 0;
-            }
-        }
-
-        // [추가] SERVER INFO 로그 클립보드 복사
-        function fallbackCopyText(text, onDone) {
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.focus();
-            ta.select();
-            try {
-                document.execCommand('copy');
-                if (onDone) onDone();
-            } catch (e) {
-                console.error('클립보드 복사 실패:', e);
-            }
-            document.body.removeChild(ta);
-        }
-
-        function copyServerLog() {
-            const logEl = document.getElementById("si-log");
-            const btn = document.getElementById("si-log-copy-btn");
-            if (!logEl) return;
-            const text = logEl.innerText;
-
-            const showCopied = () => {
-                if (!btn) return;
-                const original = btn.innerText;
-                btn.innerText = "복사됨!";
-                setTimeout(() => { btn.innerText = original; }, 1500);
-            };
-
-            // HTTP(비보안 컨텍스트)로 서빙되는 경우 Clipboard API를 못 쓸 수 있어 fallback 처리
-            if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(showCopied).catch(() => fallbackCopyText(text, showCopied));
-            } else {
-                fallbackCopyText(text, showCopied);
-            }
-        }
+        // [수정] SERVER INFO 카드 관련 함수(createServerInfoCard/updateServerInfoCard/copyServerLog 등)는
+        // 코드가 커져서 server_info.js로 분리했다 (CPU 코어별 그래프, GPU 패널, 네트워크 패널, 로그
+        // 접기/펼치기 추가). <script src="server_info.js">가 이 전역 함수들을 제공한다.
 
         // ===================== 예약 스케줄러 (SCHEDULER) =====================
         // 과거 AutoHotkey(scheduler2.ahk)로 만들었던 예약 녹화 기능을 www UI로 옮긴 것.
