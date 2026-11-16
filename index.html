@@ -473,8 +473,11 @@
             div.innerHTML = `
 					<div class="enc-header" style="display: flex; align-items: center; justify-content: space-between;">
                     <!-- 왼쪽: 인코더 이름 -->
-                    <div style="flex: 1; text-align: left;">
+                    <!-- [수정] DeckLink 장치 이름까지 붙으면 폭이 좁을 때 줄바꿈되던 문제 -
+                    white-space:nowrap + text-overflow:ellipsis로 항상 한 줄로 표시(넘치면 말줄임표) -->
+                    <div style="flex: 2 1 0; min-width: 0; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
                         <span class="enc-name">${enc.name} (Index #${enc.id})</span>
+                        ${enc.decklink_device_name ? `<span style="color:#888; font-size:12px; margin-left:6px;">[${escapeHtml(enc.decklink_device_name)}]</span>` : ''}
                     </div>
                     
                     <!-- 가운데: 녹화 중인 파일명 -->

@@ -213,6 +213,19 @@ def get_main_py_version() -> str:
         return "-"
 
 
+def extract_decklink_device_name(input_params: str) -> str:
+    """config.json의 input_params(예: '-format_code Hi59 -channels 8 -f decklink
+    -i "DeckLink Mini Recorder"')에서 DeckLink 드라이버가 보고하는 장치 고유 이름만 뽑아낸다.
+    카드 타이틀에 "(Index #N)" 옆에 실제로 꽂힌 물리 장치가 뭔지 보여주기 위함 - 여러 DeckLink
+    Duo/Quad가 섞여 있으면 Index 번호만으로는 어떤 포트인지 구분하기 어렵다."""
+    try:
+        tokens = shlex.split(input_params or "")
+        idx = tokens.index("-i")
+        return tokens[idx + 1]
+    except (ValueError, IndexError):
+        return ""
+
+
 def get_server_info() -> dict:
     mem = psutil.virtual_memory()
     return {
@@ -299,6 +312,9 @@ class EncoderConfig:
 class FFmpegEncoderWrapper:
     def __init__(self, cfg: EncoderConfig, status_callback):
         self.cfg = cfg
+        # [추가] 카드 타이틀에 표시할 DeckLink 장치 고유 이름. input_params는 서버 기동 후
+        # 안 바뀌는 정적 설정이라 매 상태 조회(get_info())마다 다시 파싱할 필요 없이 한 번만 계산해 둔다.
+        self.decklink_device_name = extract_decklink_device_name(cfg.input_params)
         self.status_cb = status_callback
         self.state = "free"
         self.process: Optional[asyncio.subprocess.Process] = None
@@ -976,6 +992,9 @@ class FFmpegEncoderWrapper:
         return {
             "id": self.cfg.id,
             "name": self.cfg.name,
+            # [추가] 카드 타이틀의 "(Index #N)" 옆에 표시할 DeckLink 장치 고유 이름
+            # (예: "DeckLink Mini Recorder", "DeckLink Duo (3)")
+            "decklink_device_name": self.decklink_device_name,
             "state": self.state,
             "progress_time": self.progress_time,
             "speed": self.speed,
