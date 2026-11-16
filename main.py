@@ -19,6 +19,7 @@ import psutil
 from server_stats import (
     get_all_ipv4_addresses, get_cpu_model, detect_nvenc_available,
     detect_nvidia_smi_available, gpu_stats_tick_loop, get_gpu_stats, get_net_io_rates,
+    get_host_uptime_str, get_service_uptime_str,
 )
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
@@ -216,6 +217,10 @@ def get_server_info() -> dict:
     mem = psutil.virtual_memory()
     return {
         "hostname": socket.gethostname(),
+        # [추가] 호스트 자체 가동 시간(OS 부팅 후 경과) / svcr2026 프로세스 자체 가동 시간.
+        # 전자는 main.py 재시작과 무관, 후자는 지금 떠 있는 이 프로세스가 언제 시작됐는지를 보여준다.
+        "host_uptime": get_host_uptime_str(),
+        "service_uptime": get_service_uptime_str(),
         "ip_list": get_all_ipv4_addresses(),
         "cpu_percent": psutil.cpu_percent(interval=None),
         "mem_percent": mem.percent,

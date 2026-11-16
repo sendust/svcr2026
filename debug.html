@@ -86,24 +86,24 @@
         <div>CPU Usage: <span id="sys-cpu">0.0%</span></div>
         <div>Memory: <span id="sys-mem">0.0%</span> (<span id="sys-mem-val">0 / 0 GB</span>)</div>
         <div style="margin-left: auto;">
-            <button id="restart-main-btn" onclick="restartMainProcess()">main.py 재시작</button>
+            <button id="restart-main-btn" onclick="restartMainProcess()">서비스 재시작</button>
         </div>
     </div>
 
     <div id="encoders-wrapper"></div>
 
  <script>
-        // [추가] main.py 재시작 버튼. 되돌릴 수 없는 동작(호스트의 모든 ffmpeg 프로세스 SIGTERM +
+        // [추가] 서비스 재시작 버튼. 되돌릴 수 없는 동작(호스트의 모든 ffmpeg 프로세스 SIGTERM +
         // 서비스 재시작)이라 반드시 두 번 확인받는다. 이 버튼은 SSE 갱신 루프가 다시 그리는
         // 대상(encoders-wrapper) 밖의 정적 엘리먼트라, index.html에서 겪었던 "잦은 재렌더링으로
         // 클릭이 씹히는" 문제와는 무관하다.
         async function restartMainProcess() {
             const confirmMsg =
-                "정말로 main.py를 재시작하시겠습니까?\n\n" +
+                "정말로 서비스를 재시작하시겠습니까?\n\n" +
                 "- 이 호스트에서 실행 중인 모든 ffmpeg 프로세스(이 서비스가 추적하지 못하는 좀비/고아 " +
                 "프로세스 포함)에 SIGTERM을 보냅니다.\n" +
                 "- 현재 진행 중인 모든 채널의 녹화/스트리밍이 중단됩니다.\n" +
-                "- main.py가 정상 종료된 뒤 몇 초 안에 자동으로 다시 시작됩니다.";
+                "- 서비스가 정상 종료된 뒤 몇 초 안에 자동으로 다시 시작됩니다.";
             if (!confirm(confirmMsg)) return;
             if (!confirm("마지막 확인입니다. 정말로 재시작할까요?")) return;
 

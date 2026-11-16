@@ -73,7 +73,11 @@ function createServerInfoCard() {
             </span>
         </div>
         <div style="font-family: monospace; font-size: 13px; line-height: 1.8; color: #ccc;">
-            HOST: <span id="si-hostname" style="color: #fff;">-</span><br>
+            HOST: <span id="si-hostname" style="color: #fff;">-</span>
+            <span style="color: #888; font-size: 11px;">
+                (host up <span id="si-host-uptime" style="color: #aaa;">-</span> ·
+                svcr2026 up <span id="si-service-uptime" style="color: #aaa;">-</span>)
+            </span><br>
             <div class="si-cpu-row">
                 <div class="si-cpu-left">
                     CPU: <span id="si-cpu" style="color: #fff;">-</span>% (<span id="si-cpu-model" style="color: #fff;">-</span> / <span id="si-cores" style="color: #fff;">-</span> cores)
@@ -189,6 +193,8 @@ function updateNetPanel(netIo) {
 
 function updateServerInfoCard(info) {
     document.getElementById("si-hostname").innerText = info.hostname;
+    document.getElementById("si-host-uptime").innerText = info.host_uptime || '-';
+    document.getElementById("si-service-uptime").innerText = info.service_uptime || '-';
     document.getElementById("si-cpu").innerText = info.cpu_percent.toFixed(1);
     // [수정] %만 보여주던 걸 free/total(GB)로 변경 - 운영 중 "실제로 메모리가 얼마나 남았는지"가
     // 백분율보다 바로 와닿는다.

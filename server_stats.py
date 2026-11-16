@@ -209,3 +209,34 @@ def get_net_io_rates() -> List[dict]:
 
     _last_net_io_sample = (now, current_sample)
     return results
+
+
+def format_uptime(seconds: float) -> str:
+    """초를 "N일 HH:MM:SS"(1일 미만이면 "HH:MM:SS") 형태로 포맷한다."""
+    seconds = max(0, int(seconds))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days > 0:
+        return f"{days}일 {hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def get_host_uptime_str() -> str:
+    """호스트(OS) 부팅 후 경과 시간. psutil.boot_time()은 커널이 기록한 실제 부팅 시각이라
+    main.py 자체의 재시작 여부와 무관하게 항상 OS 기준 가동 시간을 보여준다."""
+    try:
+        return format_uptime(time.time() - psutil.boot_time())
+    except Exception:
+        return "-"
+
+
+def get_service_uptime_str() -> str:
+    """svcr2026(main.py) 프로세스 자체가 떠 있은 시간. psutil.Process().create_time()은
+    OS가 기록한 실제 프로세스 생성 시각이라, main.py 안에서 별도로 시작 시각을 기억해둘
+    필요 없이 항상 정확하다 - 수동 재시작/자동 재시작/systemd Restart=always 어느 경우든
+    이 프로세스가 새로 뜬 순간부터 다시 0에서 센다."""
+    try:
+        return format_uptime(time.time() - psutil.Process().create_time())
+    except Exception:
+        return "-"
