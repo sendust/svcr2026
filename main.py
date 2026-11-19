@@ -121,6 +121,13 @@ CONFIG_PATH: str = ""  # lifespan 시작 시 실제 config 파일 경로로 설�
 # true          : bmxtranswrap 외부 바이너리 기반 방식(_bmx_transfer_manager_loop)
 BMXTRANSWRAP_ENABLED: bool = False
 
+# [추가] REC ALL/STREAM ALL/STOP ALL 같은 전체 일괄 동작 시, 채널간 반응에 약간의 지연을
+# 둘지 여부. config.json의 전역 설정 "delayedsync"(기본값 true)로만 결정되며, 채널별
+# 개별 설정은 불가능하다. true(기본값): 여러 채널에 명령이 동시에 몰리면 DeckLink
+# 하드웨어 초기화 부하로 워치독(Stderr Progress Timeout)이 한꺼번에 발동할 수 있어, 채널별로
+# 약간의 지연을 두고 순차 반응한다. false: 지연 없이 모든 채널이 동시에 반응한다.
+DELAYED_SYNC_ENABLED: bool = True
+
 # [추가] RTSP 미리보기 스트림 인코딩 설정 (config.json의 "stream_video_encode" 로 오버라이드 가능)
 # 이전에는 main.py에 libx264 옵션이 하드코딩되어 있었음. NVIDIA GPU가 설치된 시스템에서는
 # 서버 기동 시 h264_nvenc 실동작 여부를 검사해 자동으로 NVENC로 전환한다.
@@ -254,6 +261,9 @@ def get_server_info() -> dict:
         "server_time": datetime.now().strftime("%H:%M:%S %Y/%m/%d"),
         # [추가] config.json의 전역 "bmxtranswrap" 설정으로 결정되는 transfer 방식을 화면에 표시
         "transfer_mode": "bmxtranswrap" if BMXTRANSWRAP_ENABLED else "binary copy",
+        # [추가] REC ALL/STREAM ALL/STOP ALL 채널간 지연 여부. 프론트엔드가 이 값을 보고
+        # streamAll()/recAll()/stopAll()에서 지연을 줄지 말지 결정한다.
+        "delayed_sync": DELAYED_SYNC_ENABLED,
         # [추가] nvidia-smi 기반 GPU 상태(캐시, server_stats.gpu_stats_tick_loop가 갱신) + NIC별 tx/rx 속도
         "gpu_stats": get_gpu_stats(),
         "net_io": get_net_io_rates(),
@@ -1805,6 +1815,11 @@ async def lifespan(app: FastAPI):
     BMXTRANSWRAP_ENABLED = bool(conf_data.get("bmxtranswrap", False))
     logger.info(f"Transfer 방식: {'bmxtranswrap' if BMXTRANSWRAP_ENABLED else 'binary copy (기존 방식)'} "
                 f"(config.json bmxtranswrap={BMXTRANSWRAP_ENABLED})")
+
+    # [추가] REC ALL/STREAM ALL/STOP ALL 채널간 지연 여부 (기본값 true = 지연 있음, 기존 동작과 동일)
+    global DELAYED_SYNC_ENABLED
+    DELAYED_SYNC_ENABLED = bool(conf_data.get("delayedsync", True))
+    logger.info(f"ALL 일괄 동작 채널간 지연: {DELAYED_SYNC_ENABLED} (config.json delayedsync={DELAYED_SYNC_ENABLED})")
 
     # [추가] main.py가 재시작되기 직전(수동 재시작/크래시 후 자동 재시작/재시작 버튼 등 무엇이든)
     # 수동으로 REC 중이었던 채널은, 서버가 다시 뜨면 자동으로 녹화를 재개시킨다. 예약 스케줄러가

@@ -409,6 +409,10 @@
         let schedulerCardEl = null;
         let lastScheduleList = [];
         let schedulerNamesResolved = false;  // 인코더 이름 확정 후 스케줄 표를 "딱 한 번만" 재렌더링하기 위한 플래그
+        // [추가] config.json의 전역 "delayedsync" 값. server_info.js의 updateServerInfoCard()가
+        // server_info 이벤트를 받을 때마다 갱신한다. REC ALL/STREAM ALL/STOP ALL에서 채널간
+        // 지연을 줄지 말지 이 값으로 결정한다 (기본값 true = 기존 동작과 동일하게 지연 있음).
+        let delayedSyncEnabled = true;
         const WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
 
         // [추가] ffmpeg가 주는 "HH:MM:SS.ffffff" 형태의 progress_time에서 소수점 이하를
@@ -472,21 +476,24 @@
 
             div.innerHTML = `
 					<div class="enc-header" style="display: flex; align-items: center; justify-content: space-between;">
-                    <!-- 왼쪽: 인코더 이름 -->
-                    <!-- [수정] DeckLink 장치 이름까지 붙으면 폭이 좁을 때 줄바꿈되던 문제 -
-                    white-space:nowrap + text-overflow:ellipsis로 항상 한 줄로 표시(넘치면 말줄임표) -->
-                    <div style="flex: 2 1 0; min-width: 0; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                        <span class="enc-name">${enc.name} (Index #${enc.id})</span>
-                        ${enc.decklink_device_name ? `<span style="color:#888; font-size:12px; margin-left:6px;">[${escapeHtml(enc.decklink_device_name)}]</span>` : ''}
+                    <!-- 왼쪽: 인코더 이름 (아래 줄에 DeckLink 장치 이름) -->
+                    <!-- [수정] DeckLink 장치 이름을 채널 이름과 같은 줄에 붙이면 녹화 파일명 표시
+                    영역을 좁혀야 했다. 장치 이름은 아래 줄로 내리고, 이 영역 자체의 flex-grow
+                    비중도 줄여서 가운데 파일명 영역이 최대한 넓은 폭을 쓸 수 있게 한다. -->
+                    <div style="flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden;">
+                        <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            <span class="enc-name">${enc.name} (Index #${enc.id})</span>
+                        </div>
+                        ${enc.decklink_device_name ? `<div style="color:#888; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(enc.decklink_device_name)}</div>` : ''}
                     </div>
-                    
-                    <!-- 가운데: 녹화 중인 파일명 -->
-                    <div style="flex: 1; text-align: center;">
-                        <span id="rec-filename-${enc.id}" style="font-size: 14px; font-family: monospace; color: #ffca28; font-weight: normal;"></span>
+
+                    <!-- 가운데: 녹화 중인 파일명 (최대한 넓게) -->
+                    <div style="flex: 3 1 0; min-width: 0; text-align: center; overflow: hidden;">
+                        <span id="rec-filename-${enc.id}" style="font-size: 14px; font-family: monospace; color: #ffca28; font-weight: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%; vertical-align: bottom;"></span>
                     </div>
-                    
+
                     <!-- 오른쪽: 상태 뱃지 -->
-                    <div style="flex: 1; text-align: right;">
+                    <div style="flex: 1 1 auto; text-align: right;">
                         <span id="rec-mode-badge-${enc.id}" class="rec-mode-badge" style="display:none;"></span>
                         <span class="enc-status" id="status-badge-${enc.id}">FREE</span>
                     </div>
@@ -1227,36 +1234,34 @@ function handleWebRTCBinding(enc) {
         // [추가] STREAM ALL / REC ALL / STOP ALL
         // 여러 인코더에 명령이 동시에 몰리면 DeckLink 하드웨어 초기화 부하로
         // 워치독(Stderr Progress Timeout)이 한꺼번에 발동할 수 있어, 인코더별로 약간의 지연을 두고 순차 전송한다.
+        // [수정] config.json의 전역 "delayedsync"(delayedSyncEnabled)가 false면 지연 없이 전부 동시에 보낸다.
         function delay(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         }
 
-        // STREAM ALL: free 상태인 인코더에만 동작 (이미 stream/rec+stream 중인 인코더는 건드리지 않음)
-        async function streamAll() {
-            for (const enc of Object.values(encoderStates)) {
-                if (enc.id !== undefined && enc.state === 'free') {
-                    sendAction(enc.id, 'stream');
+        async function sendAllAction(action, filterFn) {
+            const targets = Object.values(encoderStates).filter(enc => enc.id !== undefined && filterFn(enc));
+            if (delayedSyncEnabled) {
+                for (const enc of targets) {
+                    sendAction(enc.id, action);
                     await delay(400);
                 }
+            } else {
+                targets.forEach(enc => sendAction(enc.id, action));
             }
+        }
+
+        // STREAM ALL: free 상태인 인코더에만 동작 (이미 stream/rec+stream 중인 인코더는 건드리지 않음)
+        async function streamAll() {
+            await sendAllAction('stream', enc => enc.state === 'free');
         }
 
         async function recAll() {
-            for (const enc of Object.values(encoderStates)) {
-                if (enc.id !== undefined && enc.state !== 'rec+stream') {
-                    sendAction(enc.id, 'rec');
-                    await delay(400);
-                }
-            }
+            await sendAllAction('rec', enc => enc.state !== 'rec+stream');
         }
 
         async function stopAll() {
-            for (const enc of Object.values(encoderStates)) {
-                if (enc.id !== undefined && enc.state !== 'free') {
-                    sendAction(enc.id, 'stop');
-                    await delay(400);
-                }
-            }
+            await sendAllAction('stop', enc => enc.state !== 'free');
         }
 
         createServerInfoCard();

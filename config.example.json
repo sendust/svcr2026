@@ -1,6 +1,7 @@
 {
   "total_encoders": 2,
   "bmxtranswrap": false,
+  "delayedsync": true,
   "stream_video_encode": {
     "prefer_nvenc": true,
     "nvenc_max_sessions": 3,

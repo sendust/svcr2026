@@ -204,6 +204,9 @@ function updateServerInfoCard(info) {
     document.getElementById("si-cores").innerText = info.cpu_cores;
     // [추가] config.json의 전역 bmxtranswrap 설정으로 결정되는 transfer 방식 표시
     document.getElementById("si-transfer-mode").innerText = info.transfer_mode || '-';
+    // [추가] config.json의 전역 "delayedsync" 값을 index.html의 전역 변수에 동기화.
+    // REC ALL/STREAM ALL/STOP ALL(index.html)이 이 값을 읽어 채널간 지연 여부를 결정한다.
+    if (typeof info.delayed_sync === 'boolean') delayedSyncEnabled = info.delayed_sync;
 
     updateCpuCoresBars(info.cpu_percpu);
     updateGpuPanel(info.gpu_stats);
