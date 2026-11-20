@@ -1005,6 +1005,8 @@ class FFmpegEncoderWrapper:
             # [추가] 카드 타이틀의 "(Index #N)" 옆에 표시할 DeckLink 장치 고유 이름
             # (예: "DeckLink Mini Recorder", "DeckLink Duo (3)")
             "decklink_device_name": self.decklink_device_name,
+            # [추가] 전송 대상 경로 표시용 (카드 하단에 너무 길면 앞쪽을 생략해서 보여줌)
+            "file_target_root": self.cfg.file_target_root,
             "state": self.state,
             "progress_time": self.progress_time,
             "speed": self.speed,
@@ -2044,31 +2046,26 @@ async def sse_endpoint(request: Request):
     return EventSourceResponse(event_generator())
 
 
-@app.post("/api/encoder/{enc_id}/action")
-async def encoder_action(enc_id: int, request: Request):
-    payload = await request.json()
-    action = payload.get("action")
-    transfer = payload.get("transfer", False)  # 체크박스 값 수신
-    test_enabled = payload.get("test", False)  # <--- 새로 추가
-    rec_tag = payload.get("rec_tag", "")  # <--- 새로 추가: 녹화 파일명 태그 텍스트 박스 값
-    # [추가] STREAM/REC/STOP을 어느 클라이언트가 눌렀는지 로그로 남기기 위한 접속 IP.
-    # request.client가 None일 수 있는 극히 드문 경우(테스트 클라이언트 등)를 대비해 방어적으로 처리.
-    client_ip = request.client.host if request.client else "unknown"
-
+async def _apply_encoder_action(enc_id: int, action: str, transfer: bool, test_enabled: bool,
+                                 rec_tag: str, client_ip: str, source: str = "API") -> dict:
+    """[추가] REC/입력확인(stream)/STOP 공통 처리. 브라우저 UI(/api/encoder/{id}/action)와
+    외부 제어 API(/control/...)가 완전히 동일한 로직을 타도록 분리했다 - 두 경로가 서로
+    조금씩 다르게 동작하게 되는(=나중에 둘 중 하나만 고치고 잊어버리는) drift를 막기 위함."""
     enc = encoders.get(enc_id)
     if not enc:
-        logger.warning(f"[API] 인코더 ID {enc_id}를 찾을 수 없습니다. (요청 action: {action}, client: {client_ip})")
-        return {"status": "error", "message": "Encoder not found"}
+        logger.warning(f"[{source}] 인코더 ID {enc_id}를 찾을 수 없습니다. (요청 action: {action}, client: {client_ip})")
+        raise HTTPException(status_code=404, detail="Encoder not found")
 
-    logger.info(f"[{enc.cfg.name}] API Action 수신 -> Action: '{action}', Transfer: {transfer}, Test: {test_enabled}, RecTag: '{rec_tag}', Client: {client_ip}")
+    logger.info(f"[{enc.cfg.name}] {source} Action 수신 -> Action: '{action}', Transfer: {transfer}, Test: {test_enabled}, RecTag: '{rec_tag}', Client: {client_ip}")
 
     if action == "stream":
-        # [수정] STREAM은 파일을 만들지 않으니 transfer_enabled를 실제로 쓰지는 않지만(전송 대상
-        # 파일 자체가 없음), 화면의 TRANSFER 체크박스는 "다음 REC 때 쓸 선호값"으로 계속 보여야 한다.
-        # 예전엔 free 상태에서 사용자가 체크박스만 바꾸고 STREAM을 누르면, 그 값이 요청에 아예 안
-        # 실려서(REC일 때만 보냈었음) 서버에 남아있던 예전 값으로 화면이 도로 덮어써지는 문제가 있었다.
-        # 이제 프론트엔드가 STREAM에도 현재 체크박스 값을 실어 보내므로 그대로 반영하고, config.json에도
-        # 저장해 다음 REC/서버 재시작 때도 그대로 복원되게 한다.
+        # [수정] STREAM(입력확인)은 파일을 만들지 않으니 transfer_enabled를 실제로 쓰지는 않지만
+        # (전송 대상 파일 자체가 없음), 화면의 TRANSFER 체크박스는 "다음 REC 때 쓸 선호값"으로
+        # 계속 보여야 한다. 예전엔 free 상태에서 사용자가 체크박스만 바꾸고 STREAM을 누르면, 그
+        # 체크 상태가 서버로 전혀 전달되지 않고 서버에 남아있던 예전 값(예: 시작 시 config.json의
+        # false)이 그대로 되돌아와 화면에서 체크가 풀린 것처럼 보였다. 이제 호출부가 STREAM에도
+        # 현재 체크박스 값을 실어 보내므로 그대로 반영하고, config.json에도 저장해 다음 REC/서버
+        # 재시작 때도 그대로 복원되게 한다.
         await enc.start("stream", transfer_enabled=transfer, test_enabled=test_enabled)
         # [수정] STREAM으로 전환하면 더 이상 "수동 녹화 중"이 아니므로 재개 플래그도 함께 끈다.
         # [수정] TEST 체크박스 상태도 transfer_enabled와 동일하게 저장한다 - 안 그러면 TEST 모드로
@@ -2088,9 +2085,260 @@ async def encoder_action(enc_id: int, request: Request):
         # (서버 종료 시 내부적으로 호출되는 강제 stop은 이 API를 거치지 않으므로 여기서 꺼지지 않고
         # 그대로 유지된다 - 그래야 재시작 후 자동 재개가 가능하다.)
         await save_encoder_fields_to_config(enc_id, {"manual_recording_active": False})
+    else:
+        raise HTTPException(status_code=400, detail=f"알 수 없는 action: {action}")
 
     await broadcast_status()
     return {"status": "ok", "state": enc.state}
+
+
+@app.post("/api/encoder/{enc_id}/action")
+async def encoder_action(enc_id: int, request: Request):
+    payload = await request.json()
+    action = payload.get("action")
+    transfer = payload.get("transfer", False)  # 체크박스 값 수신
+    test_enabled = payload.get("test", False)  # <--- 새로 추가
+    rec_tag = payload.get("rec_tag", "")  # <--- 새로 추가: 녹화 파일명 태그 텍스트 박스 값
+    # [추가] STREAM/REC/STOP을 어느 클라이언트가 눌렀는지 로그로 남기기 위한 접속 IP.
+    # request.client가 None일 수 있는 극히 드문 경우(테스트 클라이언트 등)를 대비해 방어적으로 처리.
+    client_ip = request.client.host if request.client else "unknown"
+    return await _apply_encoder_action(enc_id, action, transfer, test_enabled, rec_tag, client_ip, source="API")
+
+
+async def _do_rename_encoder(enc_id: int, new_name: str, source: str = "API") -> dict:
+    """[추가] 채널 이름 변경 공통 처리 (브라우저 UI/외부 제어 API 공유).
+    - 동작 중(free가 아닌)인 채널은 이름을 바꾸지 않는다: rec_path의 파일명 매칭 패턴
+      (_get_latest_rec_file)이 cfg.name을 실시간으로 참조하므로, 녹화 도중 이름이 바뀌면
+      이미 만들어진 세그먼트 파일을 더 이상 "이 채널의 파일"로 못 찾게 되는 불일치가 생긴다.
+    - 빈 값으로 저장을 시도하면("사용자가 삭제해버린 경우") 인덱스(문자열 id)로 대체한다.
+    - 다른 채널과 이름이 겹치면 거부한다(파일명 패턴/스케줄러가 이름으로 채널을 구분하므로
+      중복을 허용하면 서로 다른 두 채널의 녹화 파일이 뒤섞일 수 있다)."""
+    new_name = new_name.strip()
+    enc = encoders.get(enc_id)
+    if not enc:
+        raise HTTPException(status_code=404, detail="존재하지 않는 인코더입니다")
+    if enc.state != "free":
+        raise HTTPException(status_code=409, detail="동작 중인 채널은 이름을 변경할 수 없습니다. 먼저 정지하세요.")
+
+    if not new_name:
+        new_name = str(enc_id)
+
+    if any(other_id != enc_id and other.cfg.name == new_name for other_id, other in encoders.items()):
+        raise HTTPException(status_code=409, detail=f"이미 사용 중인 이름입니다: {new_name}")
+
+    old_name = enc.cfg.name
+    enc.cfg.name = new_name
+    await save_encoder_fields_to_config(enc_id, {"name": new_name})
+    logger.info(f"[{source}] 채널 이름 변경: '{old_name}' -> '{new_name}' (id={enc_id})")
+    await broadcast_status()
+    return {"status": "ok", "name": new_name}
+
+
+@app.post("/api/encoder/{enc_id}/rename")
+async def rename_encoder(enc_id: int, request: Request):
+    """[추가] 채널 이름 사용자 편집. 카드 타이틀의 이름 입력창에서 포커스 아웃될 때 호출된다."""
+    payload = await request.json()
+    return await _do_rename_encoder(enc_id, str(payload.get("name", "")), source="API")
+
+
+@app.get("/api/browse_dir")
+async def browse_dir(path: str = "/"):
+    """[추가] target 경로 일괄 변경 UI용 파일시스템 브라우저. 디렉터리만 나열한다(전송 대상은
+    항상 디렉터리이므로 파일은 제외). 숨김 디렉터리(.로 시작)는 목록을 어지럽히므로 제외한다."""
+    def _do_list():
+        real_path = os.path.realpath(path or "/")
+        if not os.path.isdir(real_path):
+            raise NotADirectoryError(f"디렉터리가 아니거나 존재하지 않습니다: {real_path}")
+        dirs = []
+        with os.scandir(real_path) as it:
+            for entry in it:
+                try:
+                    if entry.name.startswith('.'):
+                        continue
+                    if entry.is_dir(follow_symlinks=True):
+                        dirs.append(entry.name)
+                except OSError:
+                    continue  # 권한 없음 등으로 조회 실패한 항목은 건너뜀
+        dirs.sort()
+        parent = None if real_path == os.path.sep else (os.path.dirname(real_path.rstrip(os.path.sep)) or os.path.sep)
+        return real_path, parent, dirs
+
+    try:
+        real_path, parent, dirs = await asyncio.to_thread(_do_list)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": real_path, "parent": parent, "dirs": dirs}
+
+
+async def _do_bulk_set_target_path(new_path: str, encoder_ids: Optional[list], source: str = "API") -> dict:
+    """[추가] target 경로(file_target_root) 일괄 변경 공통 처리. encoder_ids가 없으면(None)
+    전체 채널에 적용한다. 지금 당장 녹화/전송 중이 아닌(free) 채널은 메모리 값도 즉시 갱신해
+    화면에 바로 반영하지만, 이미 돌고 있는 채널은 config.json만 갱신하고 메모리 값은 건드리지
+    않는다 - 전송 코드가 file_target_root를 매번 그 자리에서(live) 읽어가므로, 녹화 중인 채널의
+    값을 지금 바꿔버리면 "다음 레코딩부터 적용"이 아니라 지금 돌고 있는 전송이 중간에 다른
+    경로로 튀어버린다. 돌고 있는 채널은 다음 REC 시작 시점에 _reload_live_config_fields()가
+    config.json의 새 값을 자연스럽게 읽어가므로 그때 가서야 바뀐다."""
+    new_path = new_path.strip()
+    if not new_path:
+        raise HTTPException(status_code=400, detail="target_path가 비어 있습니다")
+    if not await asyncio.to_thread(os.path.isdir, new_path):
+        raise HTTPException(status_code=400, detail=f"존재하지 않는 디렉터리입니다: {new_path}")
+
+    target_ids = set(encoder_ids) if encoder_ids else set(encoders.keys())
+
+    applied_immediately, applied_next_rec = [], []
+    for enc_id in target_ids:
+        enc = encoders.get(enc_id)
+        if not enc:
+            continue
+        await save_encoder_fields_to_config(enc_id, {"file_target_root": new_path})
+        if enc.state == "free":
+            enc.cfg.file_target_root = new_path
+            applied_immediately.append(enc_id)
+        else:
+            applied_next_rec.append(enc_id)
+
+    logger.info(
+        f"[{source}] target 경로 일괄 변경: '{new_path}' "
+        f"(즉시 적용: {applied_immediately}, 다음 녹화부터 적용: {applied_next_rec})"
+    )
+    await broadcast_status()
+    return {"status": "ok", "applied_immediately": applied_immediately, "applied_next_rec": applied_next_rec}
+
+
+@app.post("/api/bulk/target_path")
+async def bulk_set_target_path(request: Request):
+    payload = await request.json()
+    return await _do_bulk_set_target_path(
+        str(payload.get("target_path", "")), payload.get("encoder_ids"), source="API"
+    )
+
+
+async def _do_bulk_set_rec_tag(new_tag: str, encoder_ids: Optional[list], source: str = "API") -> dict:
+    """[추가] 녹화 파일명 태그(rec_tag) 일괄 변경 공통 처리. target_path와 달리 채널 상태
+    (free 여부)를 가릴 필요가 없다 - rec_tag는 start() 호출 시점의 파라미터로만 그 세션에
+    반영되고(self.rec_tag는 세션 시작 때 한 번 정해지면 끝날 때까지 안 바뀜), 지금 여기서
+    cfg.rec_tag를 바꿔도 이미 진행 중인 세션에는 전혀 영향이 없다. 다만 브라우저 UI의 REC
+    버튼은 화면 입력창의 값을 그대로 보내므로(config.json을 다시 읽지 않음), 다음 REC부터
+    실제로 적용되려면 프론트엔드가 각 채널의 입력창 값도 함께 갱신해야 한다 - 그건 응답을
+    받은 쪽(index.html)이 처리한다. 외부 제어 API로 호출한 경우는 애초에 그 화면 입력창이
+    없으므로 해당 없음."""
+    new_tag = sanitize_filename_tag(new_tag.strip())
+    target_ids = set(encoder_ids) if encoder_ids else set(encoders.keys())
+
+    applied = []
+    for enc_id in target_ids:
+        enc = encoders.get(enc_id)
+        if not enc:
+            continue
+        enc.cfg.rec_tag = new_tag
+        await save_encoder_fields_to_config(enc_id, {"rec_tag": new_tag})
+        applied.append(enc_id)
+
+    logger.info(f"[{source}] 녹화 파일명 태그 일괄 변경: '{new_tag}' (적용: {applied})")
+    await broadcast_status()
+    return {"status": "ok", "rec_tag": new_tag, "applied": applied}
+
+
+@app.post("/api/bulk/rec_tag")
+async def bulk_set_rec_tag(request: Request):
+    payload = await request.json()
+    return await _do_bulk_set_rec_tag(
+        str(payload.get("rec_tag", "")), payload.get("encoder_ids"), source="API"
+    )
+
+
+# =====================================================================
+# 외부 제어 API ("/control" - 브라우저 UI가 쓰는 "/api"와는 별개의 안정적인 경로)
+#
+# 브라우저 UI의 /api/* 는 화면 구현 편의에 맞춰 앞으로도 계속 바뀔 수 있는 내부용 경로다.
+# 반면 /control/* 는 외부 시스템(마스터 컨트롤, 추후 만들 gang remote 등)이 붙는 걸 전제로
+# 한, 그 자체로 안정적인 계약(contract) 역할을 하는 경로다. 실제 동작 로직은 위에서 이미
+# 만든 _apply_encoder_action/_do_rename_encoder/_do_bulk_set_*  공통 함수를 그대로
+# 재사용한다 - /api와 /control이 서로 다르게 동작하는 걸 막기 위해, 로직을 두 번 쓰지 않는다.
+#
+# 인증: 없음(내부망 신뢰 전제로 결정됨). 외부에 직접 노출되는 네트워크라면 반드시 리버스
+# 프록시/방화벽 등으로 접근을 제한해야 한다 - 이 경로 자체는 아무 검사도 하지 않는다.
+# =====================================================================
+
+@app.get("/control")
+async def control_root():
+    """[추가] 외부 연동 개발자가 처음 이 경로를 두드려봤을 때 뭐가 있는지 바로 알 수 있도록
+    사용 가능한 엔드포인트 목록을 안내한다."""
+    return {
+        "description": "svcr2026 외부 제어 API. 인증 없음(내부망 신뢰 전제) - 네트워크 경계에서 접근을 제한할 것.",
+        "endpoints": {
+            "GET /control/channels": "전체 채널 상태 조회",
+            "GET /control/channels/{id}": "단일 채널 상태 조회",
+            "POST /control/channels/{id}/rec": "REC 시작 {transfer?, test?, rec_tag?}",
+            "POST /control/channels/{id}/stream": "입력확인(STREAM) 시작 {transfer?, test?}",
+            "POST /control/channels/{id}/stop": "정지",
+            "POST /control/channels/{id}/rename": "채널 이름 변경 {name}",
+            "POST /control/bulk/target_path": "전송 대상 경로 일괄 변경 {target_path, encoder_ids?}",
+            "POST /control/bulk/rec_tag": "녹화 파일명 태그 일괄 변경 {rec_tag, encoder_ids?}",
+        },
+    }
+
+
+@app.get("/control/channels")
+async def control_list_channels():
+    return await asyncio.gather(*(enc.get_info() for enc in encoders.values()))
+
+
+@app.get("/control/channels/{enc_id}")
+async def control_get_channel(enc_id: int):
+    enc = encoders.get(enc_id)
+    if not enc:
+        raise HTTPException(status_code=404, detail="존재하지 않는 인코더입니다")
+    return await enc.get_info()
+
+
+@app.post("/control/channels/{enc_id}/rec")
+async def control_rec(enc_id: int, request: Request):
+    payload = await request.json() if await request.body() else {}
+    client_ip = request.client.host if request.client else "unknown"
+    return await _apply_encoder_action(
+        enc_id, "rec", payload.get("transfer", False), payload.get("test", False),
+        payload.get("rec_tag", ""), client_ip, source="CONTROL",
+    )
+
+
+@app.post("/control/channels/{enc_id}/stream")
+async def control_stream(enc_id: int, request: Request):
+    payload = await request.json() if await request.body() else {}
+    client_ip = request.client.host if request.client else "unknown"
+    return await _apply_encoder_action(
+        enc_id, "stream", payload.get("transfer", False), payload.get("test", False),
+        "", client_ip, source="CONTROL",
+    )
+
+
+@app.post("/control/channels/{enc_id}/stop")
+async def control_stop(enc_id: int, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    return await _apply_encoder_action(enc_id, "stop", False, False, "", client_ip, source="CONTROL")
+
+
+@app.post("/control/channels/{enc_id}/rename")
+async def control_rename(enc_id: int, request: Request):
+    payload = await request.json()
+    return await _do_rename_encoder(enc_id, str(payload.get("name", "")), source="CONTROL")
+
+
+@app.post("/control/bulk/target_path")
+async def control_bulk_target_path(request: Request):
+    payload = await request.json()
+    return await _do_bulk_set_target_path(
+        str(payload.get("target_path", "")), payload.get("encoder_ids"), source="CONTROL"
+    )
+
+
+@app.post("/control/bulk/rec_tag")
+async def control_bulk_rec_tag(request: Request):
+    payload = await request.json()
+    return await _do_bulk_set_rec_tag(
+        str(payload.get("rec_tag", "")), payload.get("encoder_ids"), source="CONTROL"
+    )
 
 
 def _validate_schedule_payload(payload: dict):

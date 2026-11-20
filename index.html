@@ -148,6 +148,34 @@
         .btn-confirm-yes { background-color: #d32f2f; }
         .btn-confirm-no { background-color: #444; }
 
+        /* [추가] TARGET 경로 일괄변경 모달 (파일시스템 브라우저) */
+        .target-modal-box {
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px 24px;
+            width: 560px;
+            max-width: 90vw;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+        .target-dir-entry {
+            padding: 5px 8px;
+            cursor: pointer;
+            border-radius: 3px;
+            color: #ddd;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .target-dir-entry:hover { background: #2a2a2a; }
+        .target-channel-chk-label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #ccc;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
         .enc-header {
             display: flex;
             justify-content: space-between;
@@ -159,6 +187,24 @@
             font-size: 18px;
             font-weight: bold;
             color: #4da6ff;
+        }
+
+        /* [추가] 채널 이름 편집 입력창. 평소엔 일반 텍스트처럼 보이다가, hover/focus일 때만
+        편집 가능하다는 걸 점선 밑줄로 살짝 드러낸다. */
+        .enc-name-input {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4da6ff;
+            background: transparent;
+            border: none;
+            border-bottom: 1px dashed transparent;
+            padding: 0;
+            width: 110px;
+            font-family: inherit;
+        }
+        .enc-name-input:hover, .enc-name-input:focus {
+            border-bottom: 1px dashed #4da6ff;
+            outline: none;
         }
 
         .enc-status {
@@ -367,9 +413,23 @@
             font-family: monospace;
             font-size: 11.2px; /* 기본 레이블 글자 크기 (16px의 70%) */
             color: #ccc;
-            border-radius: 4px;
+            border-radius: 4px 4px 0 0; /* [수정] 바로 아래 target-path-bar와 이어붙게 아래쪽 모서리는 각지게 */
             display: flex;
             gap: 24px; /* 항목 간 간격 확대 */
+        }
+
+        /* [추가] 전송 대상 경로 표시 줄 */
+        .target-path-bar {
+            background: #0d0d0d;
+            border: 1px solid #282828;
+            border-top: none;
+            padding: 5px 16px;
+            font-family: monospace;
+            font-size: 10.5px;
+            color: #888;
+            border-radius: 0 0 4px 4px;
+            white-space: nowrap;
+            overflow: hidden;
         }
 
         .telemetry-item span {
@@ -392,9 +452,11 @@
         <h1 style="border-bottom: none; padding-bottom: 0; margin-bottom: 0;">XDCAM50 멀티채널 레코더 (by sendust 2026) <span id="hostname-display" style="color: #4da6ff;">(-)</span> <span id="version-display" style="color: #888; font-size: 14px; font-weight: normal;"></span></h1>
         <div style="display: flex; gap: 10px;">
             <button class="btn-transfer" onclick="toggleTransferAll()">TRANSFER</button>
-            <button class="btn-stream" onclick="streamAll()">STREAM ALL</button>
+            <button class="btn-stream" onclick="streamAll()">입력확인 ALL</button>
             <button class="btn-rec" onclick="recAll()">REC ALL</button>
             <button class="btn-stop" onclick="stopAll()">STOP ALL</button>
+            <button class="btn-copy" onclick="openTargetPathModal()">TARGET 경로 일괄변경</button>
+            <button class="btn-copy" onclick="openTagBulkModal()">태그명 일괄변경</button>
         </div>
     </div>
     <div id="encoders-wrapper" class="encoders-container"></div>
@@ -468,6 +530,14 @@
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
+        // [추가] 경로가 maxLen을 넘으면 앞(parent 디렉터리 방향)을 "...."으로 생략하고 뒤쪽
+        // (실제 리프 디렉터리)은 그대로 남긴다. 어떤 target 경로로 설정돼 있는지는 보통 맨 끝
+        // 폴더명이 가장 식별력이 높아서, CSS ellipsis(뒤쪽을 자르는 방식)의 반대 방향이 필요하다.
+        function truncatePathFromStart(path, maxLen) {
+            if (!path || path.length <= maxLen) return path || '';
+            return '....' + path.slice(-(maxLen - 4));
+        }
+
         function createEncoderDOM(enc) {
             const wrapper = document.getElementById("encoders-wrapper");
             const div = document.createElement("div");
@@ -482,7 +552,12 @@
                     비중도 줄여서 가운데 파일명 영역이 최대한 넓은 폭을 쓸 수 있게 한다. -->
                     <div style="flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden;">
                         <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            <span class="enc-name">${enc.name} (Index #${enc.id})</span>
+                            <!-- [추가] 채널 이름 사용자 편집. 중복/빈 값 처리는 서버(rename_encoder)가 최종 검증한다 -->
+                            <input type="text" class="enc-name-input" id="enc-name-input-${enc.id}"
+                                   value="${escapeHtml(enc.name)}" title="클릭해서 채널 이름 변경"
+                                   onkeydown="if(event.key==='Enter'){this.blur();}"
+                                   onblur="renameEncoder(${enc.id}, this)">
+                            <span style="color:#888; font-size:12px;">(Index #${enc.id})</span>
                         </div>
                         ${enc.decklink_device_name ? `<div style="color:#888; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(enc.decklink_device_name)}</div>` : ''}
                     </div>
@@ -534,7 +609,7 @@
                     </div>
                 </div>
 				<div class="controls">
-                    <button class="btn-stream" id="btn-stream-${enc.id}" onclick="sendAction(${enc.id}, 'stream')">STREAM</button>
+                    <button class="btn-stream" id="btn-stream-${enc.id}" onclick="sendAction(${enc.id}, 'stream')">입력확인</button>
                     <button class="btn-rec" id="btn-rec-${enc.id}" onclick="sendAction(${enc.id}, 'rec')">REC</button>
                     <label style="display: flex; align-items: center; cursor: pointer; color: #ffeb3b; font-size: 13px;">
                         <input type="checkbox" id="chk-transfer-${enc.id}" ${enc.transfer_enabled ? 'checked' : ''} style="margin-right: 5px;"> TRANSFER
@@ -558,6 +633,9 @@
                     <div class="telemetry-item">FILE: <span id="telem-file-${enc.id}">0 B</span></div>
                     <div class="telemetry-item">FFLOG: <span id="telem-fflog-${enc.id}">0 B</span></div>
                 </div>
+                <!-- [추가] 전송 대상 경로 표시. 너무 길면 앞(parent) 쪽을 "...."으로 생략해서
+                항상 뒤쪽(실제 리프 디렉터리)이 보이게 한다 -->
+                <div class="target-path-bar" id="target-path-${enc.id}" title=""></div>
             `;
             wrapper.appendChild(div);
         }
@@ -668,6 +746,15 @@
             document.getElementById(`telem-speed-${enc.id}`).innerText = enc.speed;
             document.getElementById(`telem-file-${enc.id}`).innerText = formatBytes(enc.file_size);
             document.getElementById(`telem-fflog-${enc.id}`).innerText = formatBytes(enc.fflog_size);
+
+            // [추가] 전송 대상 경로. 너무 길면 앞(parent) 쪽을 "...."으로 생략해 뒤쪽(리프
+            // 디렉터리)이 항상 보이게 한다. 전체 경로는 title 툴팁으로 확인 가능.
+            const targetPathEl = document.getElementById(`target-path-${enc.id}`);
+            if (targetPathEl) {
+                const fullPath = enc.file_target_root || '';
+                targetPathEl.innerText = 'TARGET: ' + truncatePathFromStart(fullPath, 56);
+                targetPathEl.title = fullPath;
+            }
 
             handleWebRTCBinding(enc);
         }
@@ -840,6 +927,35 @@ function handleWebRTCBinding(enc) {
                     requestAnimationFrame(draw);
                 };
                 requestAnimationFrame(draw);
+            }
+        }
+
+        // [추가] 채널 이름 편집. blur(포커스 아웃) 시점에 호출된다. 중복/빈 값 최종 검증은
+        // 서버(rename_encoder)가 한다 - 동시에 여러 사람이 같은 페이지를 보고 있어도 서버가
+        // 유일한 진실 공급원(single source of truth)이기 때문. 실패하면 서버가 돌려준 실제
+        // 현재 이름으로 입력창을 되돌린다 (사용자가 입력한 값이 화면에 잘못 남지 않도록).
+        async function renameEncoder(encId, inputEl) {
+            const newName = inputEl.value.trim();
+            const prevName = encoderStates[encId] ? encoderStates[encId].name : '';
+            if (newName === prevName) return;  // 변경 없으면 요청 자체를 보내지 않음
+
+            try {
+                const res = await fetch(`/api/encoder/${encId}/rename`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: newName })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.detail || "이름 변경 실패");
+                    inputEl.value = prevName;
+                    return;
+                }
+                // 서버가 확정한 이름(빈 값 -> 인덱스 폴백 등)으로 입력창을 맞춘다
+                inputEl.value = data.name;
+            } catch (e) {
+                alert("이름 변경 요청 중 오류가 발생했습니다.");
+                inputEl.value = prevName;
             }
         }
 
@@ -1264,9 +1380,197 @@ function handleWebRTCBinding(enc) {
             await sendAllAction('stop', enc => enc.state !== 'free');
         }
 
+        // ===================== TARGET 경로 일괄 변경 (파일시스템 브라우저) =====================
+        let targetModalCurrentPath = '/';
+
+        function createTargetPathModal() {
+            const div = document.createElement('div');
+            div.id = 'target-modal-overlay';
+            div.className = 'confirm-modal-overlay';
+            div.innerHTML = `
+                <div class="target-modal-box">
+                    <h3 style="margin-top:0; color:#fff;">TARGET 경로 일괄 변경</h3>
+                    <div style="margin-bottom:10px;">
+                        <input type="text" id="target-modal-path-input" style="width:100%; box-sizing:border-box; padding:6px 10px; background:#242424; border:1px solid #444; border-radius:4px; color:#fff; font-family:monospace;"
+                               onkeydown="if(event.key==='Enter'){browseToPath(this.value);}">
+                    </div>
+                    <div id="target-modal-dir-list" style="height:260px; overflow-y:auto; background:#0d0d0d; border:1px solid #282828; border-radius:4px; padding:6px;"></div>
+                    <div style="margin-top:12px; color:#ccc; font-size:13px;">적용할 채널 (체크된 채널만 적용):</div>
+                    <div id="target-modal-channel-list" style="display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 14px;"></div>
+                    <div class="confirm-modal-actions">
+                        <button type="button" class="btn-confirm-no" onclick="closeTargetPathModal()">취소</button>
+                        <button type="button" class="btn-confirm-yes" onclick="applyTargetPath()">이 경로 적용</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(div);
+            div.addEventListener('click', (e) => { if (e.target === div) closeTargetPathModal(); });
+            // [추가] 폴더 목록은 매번 innerHTML로 다시 그려지므로, 개별 항목에 onclick을 심는 대신
+            // 컨테이너 하나에만 이벤트 위임을 걸어둔다 (경로 문자열을 onclick 속성 문자열에 직접
+            // 끼워넣다가 따옴표/특수문자 때문에 깨지는 걸 피하기 위함 - data-path + delegation이 안전).
+            document.getElementById('target-modal-dir-list').addEventListener('click', (e) => {
+                const entry = e.target.closest('.target-dir-entry');
+                if (entry && entry.dataset.path) browseToPath(entry.dataset.path);
+            });
+        }
+
+        function openTargetPathModal() {
+            document.getElementById('target-modal-overlay').style.display = 'flex';
+            const listEl = document.getElementById('target-modal-channel-list');
+            listEl.innerHTML = Object.values(encoderStates)
+                .filter(enc => enc.id !== undefined)
+                .map(enc => `
+                    <label class="target-channel-chk-label">
+                        <input type="checkbox" class="target-channel-chk" value="${enc.id}" checked> ${escapeHtml(enc.name)}
+                    </label>
+                `).join('');
+            // 시작 경로: 아무 채널이나 현재 target 경로가 있으면 거기서, 없으면 루트에서 시작
+            const anyEnc = Object.values(encoderStates).find(enc => enc.file_target_root);
+            browseToPath(anyEnc ? anyEnc.file_target_root : '/');
+        }
+
+        function closeTargetPathModal() {
+            document.getElementById('target-modal-overlay').style.display = 'none';
+        }
+
+        async function browseToPath(path) {
+            try {
+                const res = await fetch(`/api/browse_dir?path=${encodeURIComponent(path)}`);
+                const data = await res.json();
+                if (!res.ok) { alert(data.detail || '경로 조회 실패'); return; }
+
+                targetModalCurrentPath = data.path;
+                document.getElementById('target-modal-path-input').value = data.path;
+
+                const listEl = document.getElementById('target-modal-dir-list');
+                listEl.innerHTML = '';
+                if (data.parent) {
+                    const upEl = document.createElement('div');
+                    upEl.className = 'target-dir-entry';
+                    upEl.textContent = '.. (상위 폴더)';
+                    upEl.dataset.path = data.parent;
+                    listEl.appendChild(upEl);
+                }
+                if (data.dirs.length === 0 && !data.parent) {
+                    const emptyEl = document.createElement('div');
+                    emptyEl.style.cssText = 'color:#666; padding:6px;';
+                    emptyEl.textContent = '(하위 폴더 없음)';
+                    listEl.appendChild(emptyEl);
+                }
+                data.dirs.forEach(name => {
+                    const el = document.createElement('div');
+                    el.className = 'target-dir-entry';
+                    el.textContent = '📁 ' + name;
+                    const sep = data.path.endsWith('/') ? '' : '/';
+                    el.dataset.path = data.path + sep + name;
+                    listEl.appendChild(el);
+                });
+            } catch (e) {
+                alert('경로 조회 중 오류가 발생했습니다.');
+            }
+        }
+
+        async function applyTargetPath() {
+            const encoderIds = Array.from(document.querySelectorAll('.target-channel-chk:checked')).map(el => parseInt(el.value, 10));
+            if (encoderIds.length === 0) { alert('적용할 채널을 하나 이상 선택하세요'); return; }
+            const path = document.getElementById('target-modal-path-input').value;
+
+            const ok = await showConfirmModal(
+                `"${path}" 경로를 ${encoderIds.length}개 채널에 적용할까요?\n(지금 녹화 중인 채널은 다음 녹화부터 적용됩니다)`
+            );
+            if (!ok) return;
+
+            try {
+                const res = await fetch('/api/bulk/target_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_path: path, encoder_ids: encoderIds })
+                });
+                const data = await res.json();
+                if (!res.ok) { alert(data.detail || '적용 실패'); return; }
+                closeTargetPathModal();
+                let msg = '적용 완료.';
+                if (data.applied_immediately.length) msg += `\n즉시 반영: ${data.applied_immediately.length}개 채널`;
+                if (data.applied_next_rec.length) msg += `\n다음 녹화부터 반영: ${data.applied_next_rec.length}개 채널`;
+                await showConfirmModal(msg, { hideNo: true });
+            } catch (e) {
+                alert('적용 요청 중 오류가 발생했습니다.');
+            }
+        }
+
+        // ===================== 태그명 일괄 변경 =====================
+        function createTagBulkModal() {
+            const div = document.createElement('div');
+            div.id = 'tag-modal-overlay';
+            div.className = 'confirm-modal-overlay';
+            div.innerHTML = `
+                <div class="target-modal-box" style="width:420px;">
+                    <h3 style="margin-top:0; color:#fff;">태그명 일괄 변경</h3>
+                    <input type="text" id="tag-modal-input" placeholder="새 파일명 태그 입력"
+                           style="width:100%; box-sizing:border-box; padding:6px 10px; background:#242424; border:1px solid #444; border-radius:4px; color:#fff; font-size:13px; margin-bottom:14px;">
+                    <div style="color:#ccc; font-size:13px;">적용할 채널 (체크된 채널만 적용):</div>
+                    <div id="tag-modal-channel-list" style="display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 14px;"></div>
+                    <div class="confirm-modal-actions">
+                        <button type="button" class="btn-confirm-no" onclick="closeTagBulkModal()">취소</button>
+                        <button type="button" class="btn-confirm-yes" onclick="applyTagBulk()">적용</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(div);
+            div.addEventListener('click', (e) => { if (e.target === div) closeTagBulkModal(); });
+        }
+
+        function openTagBulkModal() {
+            document.getElementById('tag-modal-overlay').style.display = 'flex';
+            document.getElementById('tag-modal-input').value = '';
+            const listEl = document.getElementById('tag-modal-channel-list');
+            listEl.innerHTML = Object.values(encoderStates)
+                .filter(enc => enc.id !== undefined)
+                .map(enc => `
+                    <label class="target-channel-chk-label">
+                        <input type="checkbox" class="tag-channel-chk" value="${enc.id}" checked> ${escapeHtml(enc.name)}
+                    </label>
+                `).join('');
+        }
+
+        function closeTagBulkModal() {
+            document.getElementById('tag-modal-overlay').style.display = 'none';
+        }
+
+        async function applyTagBulk() {
+            const encoderIds = Array.from(document.querySelectorAll('.tag-channel-chk:checked')).map(el => parseInt(el.value, 10));
+            if (encoderIds.length === 0) { alert('적용할 채널을 하나 이상 선택하세요'); return; }
+            const tag = document.getElementById('tag-modal-input').value;
+
+            try {
+                const res = await fetch('/api/bulk/rec_tag', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rec_tag: tag, encoder_ids: encoderIds })
+                });
+                const data = await res.json();
+                if (!res.ok) { alert(data.detail || '적용 실패'); return; }
+
+                // [추가] REC 버튼은 화면 입력창의 값을 그대로 서버에 보내지(config.json을 다시
+                // 읽지 않음) 때문에, 서버가 확정한 태그로 각 채널의 입력창 값도 함께 갱신해야
+                // 실제로 "다음 녹화부터" 새 태그가 쓰인다.
+                data.applied.forEach(encId => {
+                    const input = document.getElementById(`rec-tag-${encId}`);
+                    if (input) input.value = data.rec_tag;
+                });
+
+                closeTagBulkModal();
+                await showConfirmModal(`태그 "${data.rec_tag}"를 ${data.applied.length}개 채널에 적용했습니다.`, { hideNo: true });
+            } catch (e) {
+                alert('적용 요청 중 오류가 발생했습니다.');
+            }
+        }
+
         createServerInfoCard();
         createSchedulerPanel();
         createConfirmModal();
+        createTargetPathModal();
+        createTagBulkModal();
         fetchSchedulesOnce();
 
         // SSE 스트림 연결
